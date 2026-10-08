@@ -1,26 +1,144 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --bg-main: #0a0c12;
+  --bg-surface: #12151f;
+  --bg-card: #181c28;
+  --bg-cell-empty: #1f2533;
+  --border-subtle: #2b3345;
+  --border-strong: #3e4a63;
+  --color-blue: #2563eb;
+  --color-blue-bright: #3b82f6;
+  --color-blue-dark: #1d4ed8;
+  --color-red: #dc2626;
+  --color-red-bright: #ef4444;
+  --color-red-dark: #b91c1c;
+  --text-white: #ffffff;
+  --text-dim: #94a3b8;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--bg-main);
+  color: var(--text-white);
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  user-select: none;
+  -webkit-user-select: none;
+  overflow-x: hidden;
+  margin: 0;
+  padding: 0;
+}
+
+/* Crisp solid border utilities */
+.border-solid-blue {
+  border: 1px solid var(--color-blue);
+}
+
+.border-solid-red {
+  border: 1px solid var(--color-red);
+}
+
+.border-subtle {
+  border: 1px solid var(--border-subtle);
+}
+
+/* Subtle glow without gradients */
+.glow-blue {
+  box-shadow: 0 0 16px rgba(37, 99, 235, 0.25);
+}
+
+.glow-red {
+  box-shadow: 0 0 16px rgba(239, 68, 68, 0.25);
+}
+
+/* Board & Cell animations */
+@keyframes popIn {
+  0% { transform: scale(0.7); opacity: 0.5; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes flashClear {
+  0% { transform: scale(1); filter: brightness(2); }
+  50% { transform: scale(1.1); filter: brightness(2.5); }
+  100% { transform: scale(0.8); opacity: 0; }
+}
+
+.cell-placed {
+  animation: popIn 0.15s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.cell-cleared {
+  animation: flashClear 0.25s forwards ease-out;
+}
+
+/* Dynamic Line Clear Preview (Will Blast Shimmer) */
+@keyframes willBlastShimmer {
+  0% {
+    transform: scale(0.95);
+    filter: brightness(1.5);
+    box-shadow: inset 0 0 6px #ffffff;
+  }
+  100% {
+    transform: scale(1.05);
+    filter: brightness(2.2);
+    box-shadow: inset 0 0 14px #ffffff;
+  }
+}
+
+.will-blast-cell {
+  animation: willBlastShimmer 0.35s infinite alternate ease-in-out !important;
+  border: 2px solid #ffffff !important;
+  z-index: 20;
+}
+
+/* Screen / Board Shake on Combo */
+@keyframes boardShake {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-4px, 3px) rotate(-0.6deg); }
+  40% { transform: translate(4px, -3px) rotate(0.6deg); }
+  60% { transform: translate(-3px, -2px) rotate(-0.3deg); }
+  80% { transform: translate(3px, 2px) rotate(0.3deg); }
+}
+
+.shake-board {
+  animation: boardShake 0.35s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
+}
+
+/* Combo Banner Pop-In */
+@keyframes comboBanner {
+  0% { transform: scale(0.3) rotate(-6deg); opacity: 0; }
+  50% { transform: scale(1.25) rotate(2deg); opacity: 1; }
+  75% { transform: scale(0.95) rotate(-1deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+
+.combo-banner-anim {
+  animation: comboBanner 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+/* Floating score gaining animation */
+@keyframes floatUpScore {
+  0% { transform: translateY(0) scale(0.7); opacity: 0; }
+  20% { transform: translateY(-8px) scale(1.15); opacity: 1; }
+  80% { transform: translateY(-32px) scale(1); opacity: 1; }
+  100% { transform: translateY(-48px) scale(0.9); opacity: 0; }
+}
+
+.float-score-anim {
+  animation: floatUpScore 0.85s ease-out forwards;
+}
+
+/* Custom Scrollbar simple */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0a0c12;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b3345;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3e4a63;
 }
