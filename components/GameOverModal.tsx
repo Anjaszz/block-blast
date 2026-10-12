@@ -75,11 +75,17 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
           {gameMode === 'stage' && stageRank && (
             <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-[#181d2a] border border-[#262e3f] rounded-lg">
               {stageRank === 1 ? (
-                <Crown className="w-4 h-4 text-[#facc15]" />
-              ) : null}
-              <span className="text-xs font-bold text-white">
-                FINISH POSITION: #{stageRank}
-              </span>
+                <>
+                  <Crown className="w-4 h-4 text-[#facc15]" />
+                  <span className="text-xs font-black text-[#facc15]">
+                    JUARA 1 (LAST SURVIVOR)
+                  </span>
+                </>
+              ) : (
+                <span className="text-xs font-bold text-[#94a3b8]">
+                  PERINGKAT #{stageRank} (TERELIMINASI)
+                </span>
+              )}
             </div>
           )}
         </div>
@@ -111,7 +117,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         {/* Stage Winner Mention */}
         {gameMode === 'stage' && stageWinner && (
           <div className="p-2.5 bg-[#181d2a] border border-[#262e3f] rounded-lg text-xs flex items-center justify-between">
-            <span className="text-[#94a3b8]">STAGE CHAMPION:</span>
+            <span className="text-[#94a3b8]">JUARA STAGE (SURVIVOR):</span>
             <span className="font-bold text-[#facc15] flex items-center gap-1">
               <Crown className="w-3.5 h-3.5" />
               {stageWinner.username} ({stageWinner.score.toLocaleString()} pts)

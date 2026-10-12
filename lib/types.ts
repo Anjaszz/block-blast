@@ -21,6 +21,7 @@ export interface Player {
   isHost?: boolean;
   rank?: number;
   accentColor: string;
+  eliminatedAt?: number; // Timestamp when player got eliminated (for Last Man Standing survival rank)
 }
 
 export interface RoomInfo {

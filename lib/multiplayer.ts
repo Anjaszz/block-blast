@@ -22,6 +22,30 @@ export interface MultiplayerCallbacks {
   onRoomClosed?: (message: string) => void;
 }
 
+// Helper to rank players primarily by Survival (Last Man Standing), then by score
+export function sortStagePlayers(players: Player[]): Player[] {
+  return [...players].sort((a, b) => {
+    // 1. Alive players ALWAYS rank above eliminated players
+    if (a.isAlive && !b.isAlive) return -1;
+    if (!a.isAlive && b.isAlive) return 1;
+
+    // 2. If both are alive, higher score ranks higher
+    if (a.isAlive && b.isAlive) {
+      return b.score - a.score;
+    }
+
+    // 3. If both are eliminated: the one who survived longer (eliminated later) ranks higher
+    const aElim = a.eliminatedAt || 0;
+    const bElim = b.eliminatedAt || 0;
+    if (aElim !== bElim) {
+      return bElim - aElim; // Higher timestamp = eliminated later = better rank
+    }
+
+    // 4. Tie-breaker: higher score
+    return b.score - a.score;
+  });
+}
+
 export class StageManager {
   private channel: RealtimeChannel | null = null;
   private roomCode: string = '';
@@ -154,8 +178,8 @@ export class StageManager {
       p.accentColor = PLAYER_COLORS[idx % PLAYER_COLORS.length];
     });
 
-    // Limit to max 5 players
-    const sorted = merged.slice(0, 5).sort((a, b) => b.score - a.score);
+    // Limit to max 5 players, sorted by Survival rank
+    const sorted = sortStagePlayers(merged.slice(0, 5));
     sorted.forEach((p, index) => {
       p.rank = index + 1;
     });
@@ -166,7 +190,7 @@ export class StageManager {
 
   private updatePlayerScore(player: Player) {
     const list = this.state.players.map((p) => (p.id === player.id ? player : p));
-    const sorted = list.sort((a, b) => b.score - a.score);
+    const sorted = sortStagePlayers(list);
     sorted.forEach((p, index) => {
       p.rank = index + 1;
     });
@@ -179,6 +203,10 @@ export class StageManager {
     this.localPlayer.score = score;
     this.localPlayer.combo = combo;
     this.localPlayer.linesCleared = linesCleared;
+
+    if (!isAlive && this.localPlayer.isAlive) {
+      this.localPlayer.eliminatedAt = Date.now();
+    }
     this.localPlayer.isAlive = isAlive;
 
     this.updatePlayerScore(this.localPlayer);
@@ -191,9 +219,15 @@ export class StageManager {
       });
     }
 
-    if (!isAlive && this.state.players.every((p) => !p.isAlive)) {
+    // If ALL players in the room are now eliminated, finalize the match!
+    const alivePlayers = this.state.players.filter((p) => p.isAlive);
+    if (alivePlayers.length === 0) {
       this.finishGame();
     }
+  }
+
+  public forceFinishAsWinner() {
+    this.finishGame(this.localPlayer);
   }
 
   public triggerStart() {
@@ -232,12 +266,18 @@ export class StageManager {
     }, 1000);
   }
 
-  private finishGame(winnerParam?: Player | null) {
+  public finishGame(winnerParam?: Player | null) {
     if (this.timerInterval) clearInterval(this.timerInterval);
     if (this.botInterval) clearInterval(this.botInterval);
 
     this.state.status = 'finished';
-    const ranked = [...this.state.players].sort((a, b) => b.score - a.score);
+    const ranked = sortStagePlayers(this.state.players);
+    ranked.forEach((p, index) => {
+      p.rank = index + 1;
+    });
+    this.state.players = ranked;
+
+    // Winner is either designated, or the #1 ranked player (The Last Survivor)
     const winner = winnerParam || ranked[0] || null;
     this.state.winner = winner;
 
@@ -305,7 +345,7 @@ export class StageManager {
         return p;
       });
 
-      const sorted = [...this.state.players].sort((a, b) => b.score - a.score);
+      const sorted = sortStagePlayers(this.state.players);
       sorted.forEach((p, idx) => {
         p.rank = idx + 1;
       });

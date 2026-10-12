@@ -45,6 +45,14 @@ create policy "Allow public insert leaderboard"
   on public.leaderboard for insert
   with check (true);
 
+create policy "Allow public update leaderboard"
+  on public.leaderboard for update
+  using (true);
+
+create policy "Allow public delete leaderboard"
+  on public.leaderboard for delete
+  using (true);
+
 -- Rooms policies
 create policy "Allow public read rooms"
   on public.rooms for select

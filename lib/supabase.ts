@@ -67,42 +67,87 @@ export function generateRoomCode(): string {
 export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
   sanitizeLocalCache();
 
+  let combinedEntries: LeaderboardEntry[] = [];
+
+  // 1. Fetch from Supabase if configured
   if (isSupabaseConfigured && supabase) {
     try {
       const { data, error } = await supabase
         .from('leaderboard')
         .select('*')
         .order('score', { ascending: false })
-        .limit(30);
+        .limit(100);
 
-      if (!error && data !== null) {
-        return data as LeaderboardEntry[];
-      }
-      if (error) {
-        console.warn('Supabase query error:', error.message);
+      if (!error && Array.isArray(data)) {
+        combinedEntries = [...data];
+      } else if (error) {
+        console.warn('Supabase leaderboard fetch error:', error.message);
       }
     } catch (err) {
       console.warn('Supabase leaderboard fetch failed:', err);
     }
   }
 
-  // LocalStorage fallback (Mulai kosong, tidak ada data dummy)
+  // 2. Merge local storage entries & active player's high score
   if (typeof window !== 'undefined') {
-    const raw = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
-    if (raw) {
-      try {
-        return JSON.parse(raw);
-      } catch {
-        return [];
+    try {
+      const raw = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
+      if (raw) {
+        const localList: LeaderboardEntry[] = JSON.parse(raw);
+        if (Array.isArray(localList)) {
+          combinedEntries = [...combinedEntries, ...localList];
+        }
       }
+
+      // Merge current active player's local personal best if available
+      const currentUsername = localStorage.getItem('blockarena_username')?.trim();
+      const localHighScoreStr = localStorage.getItem('blockarena_solo_high_score');
+      const localHighScore = localHighScoreStr ? parseInt(localHighScoreStr, 10) : 0;
+
+      if (currentUsername && localHighScore > 0) {
+        combinedEntries.push({
+          id: `local-current-${Date.now()}`,
+          username: currentUsername,
+          score: localHighScore,
+          lines_cleared: 0,
+          max_combo: 0,
+          created_at: new Date().toISOString(),
+        });
+      }
+    } catch {
+      // Ignore local storage parse errors
     }
   }
-  return [];
+
+  // 3. DEDUPLICATION: Setiap username hanya boleh punya 1 skor tertinggi (Personal Best)
+  const userBestMap = new Map<string, LeaderboardEntry>();
+
+  for (const entry of combinedEntries) {
+    if (!entry || !entry.username || typeof entry.score !== 'number') continue;
+    const cleanName = entry.username.trim();
+    if (!cleanName) continue;
+    const lowerKey = cleanName.toLowerCase();
+
+    const existing = userBestMap.get(lowerKey);
+    if (!existing || entry.score > existing.score) {
+      userBestMap.set(lowerKey, {
+        ...entry,
+        username: cleanName, // Preserve casing of best entry
+      });
+    }
+  }
+
+  const finalLeaderboard = Array.from(userBestMap.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 30);
+
+  return finalLeaderboard;
 }
 
 /**
  * Submit score HANYA dari mode SOLO (bukan room)
- * Poin tertinggi, BUKAN akumulasi!
+ * Poin tertinggi (Personal Best), BUKAN akumulasi!
+ * Selalu memperbarui Supabase dan LocalStorage agar leaderboard selalu up-to-date.
  */
 export async function submitSoloScore(
   username: string,
@@ -112,38 +157,62 @@ export async function submitSoloScore(
 ): Promise<{ success: boolean; isOnline: boolean }> {
   if (score <= 0) return { success: false, isOnline: false };
   const cleanUsername = username.trim() || 'Anonymous';
+  let isOnlineSuccess = false;
 
+  // 1. Sync Supabase if configured
   if (isSupabaseConfigured && supabase) {
     try {
-      // Check existing best score for this user
+      // Check existing rows for this user (case-insensitive)
       const { data: existing, error: selectErr } = await supabase
         .from('leaderboard')
         .select('*')
-        .eq('username', cleanUsername)
-        .order('score', { ascending: false })
-        .limit(1);
+        .ilike('username', cleanUsername);
 
       if (!selectErr && existing && existing.length > 0) {
-        const best = existing[0];
-        if (score > best.score) {
-          // Update to new higher score
-          await supabase
+        // Find existing maximum score
+        const maxPrevScore = Math.max(...existing.map((r) => r.score));
+
+        if (score > maxPrevScore) {
+          // Player achieved a new higher score! Update the existing row
+          const primaryRow = existing[0];
+          const { error: updateErr } = await supabase
             .from('leaderboard')
             .update({
+              username: cleanUsername,
               score,
               lines_cleared: linesCleared,
               max_combo: maxCombo,
               created_at: new Date().toISOString(),
             })
-            .eq('id', best.id);
-          return { success: true, isOnline: true };
+            .eq('id', primaryRow.id);
+
+          if (!updateErr) {
+            isOnlineSuccess = true;
+            // Clean up any duplicate legacy rows for this user if delete policy permits
+            if (existing.length > 1) {
+              const otherIds = existing.slice(1).map((r) => r.id);
+              supabase.from('leaderboard').delete().in('id', otherIds).then();
+            }
+          } else {
+            console.warn('Leaderboard update blocked or failed, attempting insert fallback:', updateErr.message);
+            // Fallback insert if update RLS policy is not yet applied
+            const { error: insertErr } = await supabase.from('leaderboard').insert([
+              {
+                username: cleanUsername,
+                score,
+                lines_cleared: linesCleared,
+                max_combo: maxCombo,
+              },
+            ]);
+            if (!insertErr) isOnlineSuccess = true;
+          }
         } else {
-          // Current match score is not higher than personal best
-          return { success: false, isOnline: true };
+          // Current score is lower than or equal to existing best
+          isOnlineSuccess = true;
         }
       } else {
-        // Insert new entry
-        await supabase.from('leaderboard').insert([
+        // First time entry for this username
+        const { error: insertErr } = await supabase.from('leaderboard').insert([
           {
             username: cleanUsername,
             score,
@@ -151,42 +220,57 @@ export async function submitSoloScore(
             max_combo: maxCombo,
           },
         ]);
-        return { success: true, isOnline: true };
+        if (!insertErr) isOnlineSuccess = true;
       }
     } catch (err) {
-      console.warn('Supabase score submission error, falling back to local:', err);
+      console.warn('Supabase score submission error:', err);
     }
   }
 
-  // Fallback Local Storage
+  // 2. ALWAYS sync LocalStorage so local player cache is immediately updated
   if (typeof window !== 'undefined') {
-    const current = await fetchLeaderboard();
-    const existingIndex = current.findIndex((item) => item.username.toLowerCase() === cleanUsername.toLowerCase());
+    try {
+      const raw = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
+      let localList: LeaderboardEntry[] = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(localList)) localList = [];
 
-    if (existingIndex >= 0) {
-      if (score > current[existingIndex].score) {
-        current[existingIndex].score = score;
-        current[existingIndex].lines_cleared = linesCleared;
-        current[existingIndex].max_combo = maxCombo;
-        current[existingIndex].created_at = new Date().toISOString();
+      const existingIndex = localList.findIndex(
+        (item) => item.username.toLowerCase() === cleanUsername.toLowerCase()
+      );
+
+      if (existingIndex >= 0) {
+        if (score > localList[existingIndex].score) {
+          localList[existingIndex].score = score;
+          localList[existingIndex].lines_cleared = linesCleared;
+          localList[existingIndex].max_combo = maxCombo;
+          localList[existingIndex].created_at = new Date().toISOString();
+        }
+      } else {
+        localList.push({
+          id: `local-${Date.now()}`,
+          username: cleanUsername,
+          score,
+          lines_cleared: linesCleared,
+          max_combo: maxCombo,
+          created_at: new Date().toISOString(),
+        });
       }
-    } else {
-      current.push({
-        id: `local-${Date.now()}`,
-        username: cleanUsername,
-        score,
-        lines_cleared: linesCleared,
-        max_combo: maxCombo,
-        created_at: new Date().toISOString(),
-      });
-    }
 
-    const sorted = current.sort((a, b) => b.score - a.score).slice(0, 30);
-    localStorage.setItem(LOCAL_LEADERBOARD_KEY, JSON.stringify(sorted));
-    return { success: true, isOnline: false };
+      // Sort and keep top 30
+      const sorted = localList.sort((a, b) => b.score - a.score).slice(0, 30);
+      localStorage.setItem(LOCAL_LEADERBOARD_KEY, JSON.stringify(sorted));
+
+      // Also ensure personal best high score in localStorage is updated
+      const currentStored = parseInt(localStorage.getItem('blockarena_solo_high_score') || '0', 10);
+      if (score > currentStored) {
+        localStorage.setItem('blockarena_solo_high_score', String(score));
+      }
+    } catch {
+      // Ignore local storage error
+    }
   }
 
-  return { success: false, isOnline: false };
+  return { success: true, isOnline: isOnlineSuccess };
 }
 
 // ==========================================
