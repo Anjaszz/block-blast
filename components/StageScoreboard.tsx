@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { Player } from '@/lib/types';
-import { Timer, Crown, Flame, Skull, ShieldCheck } from 'lucide-react';
+import { Timer, Crown, Flame } from 'lucide-react';
 
 interface StageScoreboardProps {
   players: Player[];
@@ -18,8 +18,6 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
   roomCode,
 }) => {
   const maxScore = Math.max(...players.map((p) => p.score), 100);
-  const alivePlayers = players.filter((p) => p.isAlive);
-  const aliveCount = alivePlayers.length;
 
   const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -29,16 +27,11 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
 
   return (
     <div className="w-full max-w-[340px] bg-[#11141d] rounded-xl border border-[#202636] p-3.5 flex flex-col gap-3">
-      {/* Header with Stage Timer & Survival Counter */}
+      {/* Header with Stage Timer */}
       <div className="flex items-center justify-between pb-2.5 border-b border-[#202636]">
         <div>
           <div className="text-[10px] uppercase font-mono tracking-wider text-[#94a3b8]">STAGE ROOM</div>
-          <div className="flex items-center gap-2">
-            <span className="font-mono font-bold text-sm tracking-wider text-[#3b82f6]">{roomCode}</span>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#181d2a] border border-[#262e3f] text-[#94a3b8]">
-              {aliveCount}/{players.length} HIDUP
-            </span>
-          </div>
+          <div className="font-mono font-bold text-sm tracking-wider text-[#3b82f6]">{roomCode}</div>
         </div>
 
         <div className="flex items-center gap-1.5 px-3 py-1 bg-[#181d2a] border border-[#262e3f] rounded">
@@ -52,19 +45,17 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
       {/* 5-Player Leaderboard Table */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-[11px] font-mono text-[#94a3b8] px-1">
-          <span>RANK & SURVIVAL (MAX 5)</span>
+          <span>RANK & PLAYER (MAX 5)</span>
           <span>SCORE</span>
         </div>
 
         {players.map((player, index) => {
           const isLocal = player.id === localPlayerId;
           const rank = index + 1;
-          const isAlive = player.isAlive;
-          const isOnlySurvivor = isAlive && aliveCount === 1 && players.length > 1;
           const progressPercent = Math.min(100, Math.round((player.score / maxScore) * 100));
 
           let rankBadgeBg = 'bg-[#1e2433] text-[#94a3b8]';
-          if (rank === 1 && isAlive) rankBadgeBg = 'bg-[#eab308] text-black font-black';
+          if (rank === 1) rankBadgeBg = 'bg-[#eab308] text-black font-black';
           else if (rank === 2) rankBadgeBg = 'bg-[#94a3b8] text-black font-black';
           else if (rank === 3) rankBadgeBg = 'bg-[#b45309] text-white font-bold';
 
@@ -72,9 +63,7 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
             <div
               key={player.id}
               className={`p-2 rounded-lg border flex flex-col gap-1 transition-all ${
-                !isAlive
-                  ? 'bg-[#13151b] border-[#ef4444]/30 opacity-70'
-                  : isLocal
+                isLocal
                   ? 'bg-[#161c28] border-[#3b82f6]'
                   : 'bg-[#131620] border-[#1f2635]'
               }`}
@@ -83,32 +72,17 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
                 <div className="flex items-center gap-2 truncate">
                   {/* Rank Badge */}
                   <span className={`w-5 h-5 rounded flex items-center justify-center text-xs shrink-0 ${rankBadgeBg}`}>
-                    {rank === 1 && isAlive ? <Crown className="w-3 h-3" /> : rank}
+                    {rank === 1 ? <Crown className="w-3 h-3" /> : rank}
                   </span>
 
                   {/* Player Name */}
-                  <span className={`text-xs font-semibold truncate ${
-                    !isAlive ? 'text-[#ef4444] line-through' : isLocal ? 'text-[#3b82f6]' : 'text-white'
-                  }`}>
+                  <span className={`text-xs font-semibold truncate ${isLocal ? 'text-[#3b82f6]' : 'text-white'}`}>
                     {player.username} {isLocal && '(YOU)'}
                   </span>
 
-                  {/* Status Badge: Alive vs Eliminated */}
-                  {!isAlive ? (
-                    <span className="flex items-center gap-0.5 text-[9px] font-mono font-bold text-[#ef4444] bg-[#2a1417] border border-[#ef4444]/40 px-1 py-0.2 rounded shrink-0">
-                      <Skull className="w-2.5 h-2.5" />
-                      KO
-                    </span>
-                  ) : isOnlySurvivor ? (
-                    <span className="flex items-center gap-0.5 text-[9px] font-mono font-bold text-[#facc15] bg-[#292211] border border-[#eab308]/40 px-1 py-0.2 rounded shrink-0 animate-pulse">
-                      <ShieldCheck className="w-2.5 h-2.5" />
-                      SURVIVOR
-                    </span>
-                  ) : null}
-
                   {/* Combo Badge */}
-                  {player.combo > 1 && isAlive && (
-                    <span className="flex items-center gap-0.5 text-[10px] font-mono text-[#ef4444] bg-[#2a1417] px-1 rounded shrink-0">
+                  {player.combo > 1 && (
+                    <span className="flex items-center gap-0.5 text-[10px] font-mono text-[#ef4444] bg-[#2a1417] px-1 rounded">
                       <Flame className="w-2.5 h-2.5" />
                       x{player.combo}
                     </span>
@@ -116,7 +90,7 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
                 </div>
 
                 {/* Score */}
-                <span className={`font-mono font-bold text-xs shrink-0 ${!isAlive ? 'text-[#94a3b8]' : 'text-white'}`}>
+                <span className="font-mono font-bold text-xs text-white shrink-0">
                   {player.score.toLocaleString()}
                 </span>
               </div>
@@ -127,7 +101,7 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
                   className="h-full rounded-full transition-all duration-300"
                   style={{
                     width: `${progressPercent}%`,
-                    backgroundColor: !isAlive ? '#6b7280' : isLocal ? '#3b82f6' : '#dc2626',
+                    backgroundColor: isLocal ? '#3b82f6' : '#dc2626',
                   }}
                 />
               </div>

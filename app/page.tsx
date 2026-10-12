@@ -33,7 +33,7 @@ import {
   createRoomInDb,
   getRoomByCode,
 } from '@/lib/supabase';
-import { Flame, Sparkles, Skull, ShieldCheck, LogOut } from 'lucide-react';
+import { Flame, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function Home() {
@@ -83,7 +83,6 @@ export default function Home() {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [stageWinner, setStageWinner] = useState<Player | null>(null);
   const [stageRank, setStageRank] = useState<number | null>(null);
-  const [isSpectating, setIsSpectating] = useState(false);
 
   // Dragging State
   const [dragState, setDragState] = useState<{
@@ -179,7 +178,6 @@ export default function Home() {
     setLinesCleared(0);
     setIsGameOver(false);
     setIsNewHigh(false);
-    setIsSpectating(false);
   }, []);
 
   // Check Game Over Condition
@@ -194,13 +192,13 @@ export default function Home() {
       const activeShapes = currentShapes.filter((s): s is Shape => s !== null);
       if (activeShapes.length > 0 && !hasAnyValidMove(currentGrid, activeShapes)) {
         soundManager.playGameOver();
+        setIsGameOver(true);
 
         const evalScore = currentScore !== undefined ? currentScore : score;
         const evalLines = currentLines !== undefined ? currentLines : linesCleared;
         const evalCombo = currentMaxCombo !== undefined ? currentMaxCombo : maxCombo;
 
         if (currentView === 'solo') {
-          setIsGameOver(true);
           // Check personal best
           const storedBest = typeof window !== 'undefined'
             ? parseInt(localStorage.getItem('blockarena_solo_high_score') || '0', 10)
@@ -218,23 +216,12 @@ export default function Home() {
           // SUBMIT HANYA UNTUK SOLO: Skor tertinggi per 1 permainan (bukan akumulasi!)
           submitSoloScore(username, evalScore, evalLines, evalCombo);
         } else if (currentView === 'stage_playing' && stageManager) {
-          // Tandai pemain lokal gugur/tereliminasi di stage room
+          // Notify stage players that local player is finished
           stageManager.broadcastScore(evalScore, combo, evalLines, false);
-
-          const rState = stageManager.getRoomState();
-          const otherAlive = rState.players.filter((p) => p.id !== playerId && p.isAlive);
-
-          if (otherAlive.length > 0) {
-            // Masih ada lawan yang bertanding -> Masuk Mode Menonton (Spectating)
-            setIsSpectating(true);
-          } else {
-            // Semua pemain sudah tereliminasi -> Game Over resmi
-            setIsGameOver(true);
-          }
         }
       }
     },
-    [currentView, score, highScore, username, linesCleared, maxCombo, combo, stageManager, playerId]
+    [currentView, score, highScore, username, linesCleared, maxCombo, combo, stageManager]
   );
 
   // Place Shape Handler
@@ -368,17 +355,13 @@ export default function Home() {
 
   // Cell Click (click to place)
   const handleCellClick = (row: number, col: number) => {
-    if (isGameOver || isSpectating) return;
+    if (isGameOver) return;
     if (!selectedShape) return;
     handleExecutePlacement(selectedShape, row, col);
   };
 
   // Cell Hover
   const handleCellHover = (row: number, col: number) => {
-    if (isGameOver || isSpectating) {
-      setHoverPos(null);
-      return;
-    }
     if (row < 0 || col < 0) {
       setHoverPos(null);
     } else {
@@ -388,7 +371,6 @@ export default function Home() {
 
   // Start Dragging
   const handleStartDrag = (shape: Shape, e: React.PointerEvent) => {
-    if (isGameOver || isSpectating) return;
     soundManager.playPickup();
     setSelectedShape(shape);
     setDragState({
@@ -471,11 +453,9 @@ export default function Home() {
       },
       onGameStart: () => {
         handleRestartBoard();
-        setIsSpectating(false);
         setCurrentView('stage_playing');
       },
       onGameOver: (winner) => {
-        setIsSpectating(false);
         setStageWinner(winner);
         setIsGameOver(true);
         if (manager) {
@@ -557,7 +537,6 @@ export default function Home() {
   // Confirm Exit from active game
   const handleConfirmExit = () => {
     setIsConfirmExitOpen(false);
-    setIsSpectating(false);
     if (stageManager) {
       stageManager.leave();
       setStageManager(null);
@@ -640,37 +619,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* Last Survivor Victory Prompt (Saat lawan sudah tereliminasi tapi kamu masih hidup) */}
-              {currentView === 'stage_playing' && !isSpectating && !isGameOver && roomState && (() => {
-                const alive = roomState.players.filter((p) => p.isAlive);
-                if (alive.length === 1 && alive[0].id === playerId && roomState.players.length > 1) {
-                  return (
-                    <div className="w-full max-w-[400px] mb-3 p-2.5 bg-[#142318] border border-[#22c55e]/50 rounded-xl flex items-center justify-between shadow-[0_0_15px_rgba(34,197,94,0.15)] animate-pulse">
-                      <div className="flex items-center gap-2">
-                        <ShieldCheck className="w-5 h-5 text-[#22c55e] shrink-0" />
-                        <div>
-                          <div className="text-xs font-black text-[#22c55e] tracking-wide">
-                            LAST SURVIVOR! LAWAN SUDAH GUGUR
-                          </div>
-                          <div className="text-[10px] text-[#86efac]">
-                            Lanjut cetak skor atau klaim kemenangan sekarang.
-                          </div>
-                        </div>
-                      </div>
-                      <button
-                        onClick={() => {
-                          if (stageManager) stageManager.forceFinishAsWinner();
-                        }}
-                        className="px-3 py-1.5 bg-[#22c55e] hover:bg-[#16a34a] text-black text-xs font-black rounded-lg transition-all cursor-pointer shrink-0"
-                      >
-                        Klaim Menang
-                      </button>
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-
               {/* 8x8 Board Container with Shake and Combo Celebration */}
               <div ref={boardRef} className={`relative ${isShakingBoard ? 'shake-board' : ''}`}>
                 <GameBoard
@@ -682,39 +630,6 @@ export default function Home() {
                   clearingCells={clearingCells}
                   combo={combo}
                 />
-
-                {/* Spectator Mode Overlay (Ketika Pemain Gugur tapi Game Stage Masih Berjalan) */}
-                {isSpectating && (
-                  <div className="absolute inset-0 z-40 bg-black/85 backdrop-blur-xs rounded-xl flex flex-col items-center justify-center p-6 text-center animate-fade-in">
-                    <div className="p-3 bg-[#1e1315] border border-[#ef4444]/60 rounded-xl mb-3 shadow-[0_0_20px_rgba(239,68,68,0.3)]">
-                      <Skull className="w-8 h-8 text-[#ef4444] animate-bounce" />
-                    </div>
-                    <div className="px-2.5 py-0.5 bg-[#ef4444] text-white text-[10px] font-black uppercase tracking-widest rounded mb-1.5">
-                      KAMU TERELIMINASI
-                    </div>
-                    <h3 className="text-lg font-black text-white tracking-wide">
-                      MODE MENONTON (SPECTATING)
-                    </h3>
-                    <p className="text-xs text-[#94a3b8] max-w-[280px] mt-1 mb-4 leading-relaxed">
-                      Kamu telah kehabisan langkah. Silakan menonton teman bertanding secara live di Scoreboard sampai selesai!
-                    </p>
-                    <div className="p-2.5 bg-[#141824] border border-[#232a3d] rounded-lg w-full max-w-[280px] flex items-center justify-between text-xs font-mono mb-4">
-                      <span className="text-[#94a3b8]">Skor Akhir Kamu:</span>
-                      <span className="font-bold text-[#3b82f6]">{score.toLocaleString()} pts</span>
-                    </div>
-                    <button
-                      onClick={() => {
-                        if (stageManager) stageManager.leave();
-                        setIsSpectating(false);
-                        setCurrentView('dashboard');
-                      }}
-                      className="px-4 py-2 bg-[#1f2636] hover:bg-[#283247] text-white text-xs font-bold rounded-lg border border-[#303c54] transition-all cursor-pointer flex items-center gap-1.5"
-                    >
-                      <LogOut className="w-3.5 h-3.5 text-[#94a3b8]" />
-                      Kembali ke Menu Utama
-                    </button>
-                  </div>
-                )}
 
                 {/* Meriah Festive Combo Banner Overlay */}
                 {comboCelebration && (
@@ -737,23 +652,18 @@ export default function Home() {
               </div>
 
               {/* Bottom Shapes Dock */}
-              <div className={isSpectating ? 'opacity-40 pointer-events-none' : ''}>
-                <ShapeDock
-                  shapes={shapes}
-                  selectedShapeId={selectedShape?.id || null}
-                  onSelectShape={(shape) => {
-                    if (isSpectating) return;
-                    soundManager.playPickup();
-                    setSelectedShape((prev) => (prev?.id === shape.id ? null : shape));
-                  }}
-                  onStartDrag={handleStartDrag}
-                />
-              </div>
+              <ShapeDock
+                shapes={shapes}
+                selectedShapeId={selectedShape?.id || null}
+                onSelectShape={(shape) => {
+                  soundManager.playPickup();
+                  setSelectedShape((prev) => (prev?.id === shape.id ? null : shape));
+                }}
+                onStartDrag={handleStartDrag}
+              />
 
               <div className="text-[11px] font-mono text-[#64748b] text-center mt-3">
-                {isSpectating
-                  ? 'Papan terkunci. Pantau posisi & skor pemain yang bertahan di scoreboard samping.'
-                  : 'Drag atau klik balok lalu klik petak papan untuk meletakkan'}
+                Drag atau klik balok lalu klik petak papan untuk meletakkan
               </div>
             </div>
 
