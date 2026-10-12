@@ -18,7 +18,7 @@ export function getRandomColor(index: number = 0): string {
 export interface MultiplayerCallbacks {
   onRoomStateChange: (state: RoomState) => void;
   onGameStart: () => void;
-  onGameOver: (winner: Player | null) => void;
+  onGameOver: (winner: Player | null, rankedPlayers?: Player[]) => void;
   onRoomClosed?: (message: string) => void;
 }
 
@@ -52,7 +52,6 @@ export class StageManager {
   private localPlayer: Player;
   private isBotMode: boolean = false;
   private botInterval: NodeJS.Timeout | null = null;
-  private timerInterval: NodeJS.Timeout | null = null;
   private callbacks: MultiplayerCallbacks;
   public state: RoomState;
 
@@ -64,7 +63,6 @@ export class StageManager {
       name: '',
       is_private: false,
       status: 'waiting',
-      timeLeft: 120, // 2 minutes stage rush
       players: [localPlayer],
       maxPlayers: 5,
       winner: null,
@@ -186,10 +184,22 @@ export class StageManager {
 
     this.state.players = sorted;
     this.callbacks.onRoomStateChange({ ...this.state });
+
+    this.checkSurvivalWinCondition();
   }
 
   private updatePlayerScore(player: Player) {
-    const list = this.state.players.map((p) => (p.id === player.id ? player : p));
+    const list = this.state.players.map((p) => {
+      if (p.id === player.id) {
+        const elimAt =
+          !player.isAlive && p.isAlive && !player.eliminatedAt
+            ? Date.now()
+            : player.eliminatedAt || p.eliminatedAt;
+        return { ...player, eliminatedAt: elimAt };
+      }
+      return p;
+    });
+
     const sorted = sortStagePlayers(list);
     sorted.forEach((p, index) => {
       p.rank = index + 1;
@@ -197,6 +207,8 @@ export class StageManager {
 
     this.state.players = sorted;
     this.callbacks.onRoomStateChange({ ...this.state });
+
+    this.checkSurvivalWinCondition();
   }
 
   public broadcastScore(score: number, combo: number, linesCleared: number, isAlive: boolean = true) {
@@ -219,9 +231,21 @@ export class StageManager {
       });
     }
 
-    // If ALL players in the room are now eliminated, finalize the match!
+    this.checkSurvivalWinCondition();
+  }
+
+  // Check whether only 1 player remains alive (Winner) or everyone is eliminated
+  private checkSurvivalWinCondition() {
+    if (this.state.status !== 'playing') return;
+
+    const totalPlayers = this.state.players.length;
     const alivePlayers = this.state.players.filter((p) => p.isAlive);
-    if (alivePlayers.length === 0) {
+
+    // In a multiplayer match (2+ players), when exactly 1 survivor is left: they win immediately!
+    if (totalPlayers >= 2 && alivePlayers.length === 1) {
+      this.finishGame(alivePlayers[0]);
+    } else if (alivePlayers.length === 0) {
+      // If all players are eliminated, finish and rank by survival time / score
       this.finishGame();
     }
   }
@@ -248,26 +272,12 @@ export class StageManager {
 
   private startGame() {
     this.state.status = 'playing';
-    this.state.timeLeft = 120;
     this.callbacks.onGameStart();
     this.callbacks.onRoomStateChange({ ...this.state });
-
-    // Stage countdown timer
-    if (this.timerInterval) clearInterval(this.timerInterval);
-    this.timerInterval = setInterval(() => {
-      if (this.state.timeLeft <= 1) {
-        clearInterval(this.timerInterval!);
-        this.state.timeLeft = 0;
-        this.finishGame();
-      } else {
-        this.state.timeLeft--;
-        this.callbacks.onRoomStateChange({ ...this.state });
-      }
-    }, 1000);
   }
 
   public finishGame(winnerParam?: Player | null) {
-    if (this.timerInterval) clearInterval(this.timerInterval);
+    if (this.state.status === 'finished') return;
     if (this.botInterval) clearInterval(this.botInterval);
 
     this.state.status = 'finished';
@@ -277,11 +287,12 @@ export class StageManager {
     });
     this.state.players = ranked;
 
-    // Winner is either designated, or the #1 ranked player (The Last Survivor)
-    const winner = winnerParam || ranked[0] || null;
+    // Winner is designated winnerParam, or first alive player (The Last Survivor), or #1 ranked
+    const alivePlayers = ranked.filter((p) => p.isAlive);
+    const winner = winnerParam !== undefined ? winnerParam : (alivePlayers[0] || ranked[0] || null);
     this.state.winner = winner;
 
-    this.callbacks.onGameOver(winner);
+    this.callbacks.onGameOver(winner, ranked);
     this.callbacks.onRoomStateChange({ ...this.state });
 
     if (this.channel && !this.isBotMode) {
@@ -351,11 +362,12 @@ export class StageManager {
       });
       this.state.players = sorted;
       this.callbacks.onRoomStateChange({ ...this.state });
+
+      this.checkSurvivalWinCondition();
     }, 1400);
   }
 
   public leave() {
-    if (this.timerInterval) clearInterval(this.timerInterval);
     if (this.botInterval) clearInterval(this.botInterval);
 
     const isMeHost = this.state.host_id === this.localPlayer.id || Boolean(this.localPlayer.isHost);

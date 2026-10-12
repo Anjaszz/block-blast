@@ -127,20 +127,31 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
 
         {/* Action Buttons */}
         <div className="flex flex-col gap-2">
-          <button
-            onClick={onRestart}
-            className="w-full py-3 px-4 bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold text-xs tracking-wider rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer border border-[#1d4ed8]"
-          >
-            <RotateCcw className="w-4 h-4" />
-            <span>PLAY AGAIN</span>
-          </button>
+          {gameMode === 'solo' ? (
+            <>
+              <button
+                onClick={onRestart}
+                className="w-full py-3 px-4 bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold text-xs tracking-wider rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer border border-[#1d4ed8]"
+              >
+                <RotateCcw className="w-4 h-4" />
+                <span>PLAY AGAIN</span>
+              </button>
 
-          <button
-            onClick={onBackToMenu}
-            className="w-full py-2.5 px-4 bg-[#161a25] hover:bg-[#1d2332] text-[#94a3b8] hover:text-white font-semibold text-xs tracking-wide rounded-lg transition-colors cursor-pointer border border-[#222938]"
-          >
-            KEMBALI KE MENU
-          </button>
+              <button
+                onClick={onBackToMenu}
+                className="w-full py-2.5 px-4 bg-[#161a25] hover:bg-[#1d2332] text-[#94a3b8] hover:text-white font-semibold text-xs tracking-wide rounded-lg transition-colors cursor-pointer border border-[#222938]"
+              >
+                KEMBALI KE MENU
+              </button>
+            </>
+          ) : (
+            <button
+              onClick={onBackToMenu}
+              className="w-full py-3 px-4 bg-[#2563eb] hover:bg-[#3b82f6] text-white font-bold text-xs tracking-wider rounded-lg flex items-center justify-center gap-2 transition-colors cursor-pointer border border-[#1d4ed8]"
+            >
+              KEMBALI KE DASHBOARD
+            </button>
+          )}
         </div>
       </div>
     </div>

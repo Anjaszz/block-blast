@@ -223,8 +223,11 @@ export default function Home() {
           // SUBMIT HANYA UNTUK SOLO: Skor tertinggi per 1 permainan (bukan akumulasi!)
           submitSoloScore(username, evalScore, evalLines, evalCombo);
         } else if (currentView === 'stage_playing' && stageManager) {
-          // Notify stage players that local player is finished
+          // Notify stage players that local player is finished (eliminated)
           stageManager.broadcastScore(evalScore, combo, evalLines, false);
+          const currentPlayers = stageManager.getRoomState().players;
+          const myRank = currentPlayers.findIndex((p) => p.id === playerId) + 1;
+          if (myRank > 0) setStageRank(myRank);
         }
       }
     },
@@ -464,14 +467,17 @@ export default function Home() {
         handleRestartBoard();
         setCurrentView('stage_playing');
       },
-      onGameOver: (winner) => {
+      onGameOver: (winner, rankedPlayers) => {
         setStageWinner(winner);
         setIsGameOver(true);
-        if (manager) {
-          const players = manager.getRoomState().players;
-          const myRank = players.findIndex((p) => p.id === playerId) + 1;
-          setStageRank(myRank > 0 ? myRank : 1);
-        }
+        const list =
+          rankedPlayers && rankedPlayers.length > 0
+            ? rankedPlayers
+            : manager
+            ? manager.getRoomState().players
+            : [];
+        const myRank = list.findIndex((p) => p.id === playerId) + 1;
+        setStageRank(myRank > 0 ? myRank : winner?.id === playerId ? 1 : 2);
       },
       onRoomClosed: (message) => {
         alert(message);
@@ -682,7 +688,6 @@ export default function Home() {
                 <StageScoreboard
                   players={roomState.players}
                   localPlayerId={playerId}
-                  timeLeft={roomState.timeLeft}
                   roomCode={roomState.code}
                 />
 
@@ -769,10 +774,21 @@ export default function Home() {
         gameMode={currentView === 'stage_playing' ? 'stage' : 'solo'}
         stageWinner={stageWinner}
         stageRank={stageRank}
-        onRestart={handleRestartBoard}
+        onRestart={() => {
+          if (currentView === 'stage_playing') {
+            if (stageManager) stageManager.leave();
+            setStageManager(null);
+            setRoomState(null);
+            setCurrentView('dashboard');
+          } else {
+            handleRestartBoard();
+          }
+        }}
         onBackToMenu={() => {
           setIsGameOver(false);
           if (stageManager) stageManager.leave();
+          setStageManager(null);
+          setRoomState(null);
           setCurrentView('dashboard');
         }}
       />

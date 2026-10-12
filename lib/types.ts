@@ -44,7 +44,7 @@ export interface RoomState {
   is_private: boolean;
   password?: string;
   status: 'waiting' | 'countdown' | 'playing' | 'finished';
-  timeLeft: number;
+  timeLeft?: number;
   players: Player[];
   maxPlayers: number;
   winner?: Player | null;
