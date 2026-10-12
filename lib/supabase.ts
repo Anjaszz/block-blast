@@ -38,8 +38,23 @@ function sanitizeLocalCache() {
   if (typeof window === 'undefined') return;
   try {
     const rawLb = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
-    if (rawLb && (rawLb.includes('VortexMaster') || rawLb.includes('CyberBlast'))) {
-      localStorage.removeItem(LOCAL_LEADERBOARD_KEY);
+    if (rawLb) {
+      if (rawLb.includes('VortexMaster') || rawLb.includes('CyberBlast')) {
+        localStorage.removeItem(LOCAL_LEADERBOARD_KEY);
+      } else {
+        const currentName = localStorage.getItem('blockarena_username')?.trim().toLowerCase();
+        let list: LeaderboardEntry[] = JSON.parse(rawLb);
+        if (Array.isArray(list) && currentName && currentName !== 'player' && currentName !== 'player_1') {
+          // Bersihkan entri duplikat 'Player' / 'Player_1' jika user punya nama sendiri
+          const filtered = list.filter((item) => {
+            const itemLower = item.username.trim().toLowerCase();
+            return itemLower !== 'player' && itemLower !== 'player_1';
+          });
+          if (filtered.length !== list.length) {
+            localStorage.setItem(LOCAL_LEADERBOARD_KEY, JSON.stringify(filtered));
+          }
+        }
+      }
     }
 
     const rawRooms = localStorage.getItem(LOCAL_ROOMS_KEY);
@@ -122,11 +137,22 @@ export async function fetchLeaderboard(): Promise<LeaderboardEntry[]> {
   // 3. DEDUPLICATION: Setiap username hanya boleh punya 1 skor tertinggi (Personal Best)
   const userBestMap = new Map<string, LeaderboardEntry>();
 
+  const activeUser = typeof window !== 'undefined'
+    ? localStorage.getItem('blockarena_username')?.trim().toLowerCase()
+    : '';
+
   for (const entry of combinedEntries) {
     if (!entry || !entry.username || typeof entry.score !== 'number') continue;
     const cleanName = entry.username.trim();
     if (!cleanName) continue;
     const lowerKey = cleanName.toLowerCase();
+
+    // Abaikan entri default 'player' / 'player_1' jika pemain saat ini sudah memiliki username custom
+    if (activeUser && activeUser !== 'player' && activeUser !== 'player_1') {
+      if (lowerKey === 'player' || lowerKey === 'player_1') {
+        continue;
+      }
+    }
 
     const existing = userBestMap.get(lowerKey);
     if (!existing || entry.score > existing.score) {
@@ -271,6 +297,188 @@ export async function submitSoloScore(
   }
 
   return { success: true, isOnline: isOnlineSuccess };
+}
+
+/**
+ * Validasi apakah username unik dan belum digunakan oleh pemain lain.
+ * Username tidak boleh sama dengan username pemain lain (case-insensitive).
+ */
+export async function checkUsernameAvailable(
+  desiredUsername: string,
+  currentUsername?: string
+): Promise<{ available: boolean; message?: string }> {
+  const cleanDesired = desiredUsername.trim();
+  const cleanCurrent = currentUsername?.trim() || '';
+
+  if (!cleanDesired) {
+    return { available: false, message: 'Username tidak boleh kosong.' };
+  }
+
+  if (cleanDesired.length < 3) {
+    return { available: false, message: 'Username minimal 3 karakter.' };
+  }
+
+  // Jika username sama persis dengan username sendiri saat ini, maka valid
+  if (cleanCurrent && cleanDesired.toLowerCase() === cleanCurrent.toLowerCase()) {
+    return { available: true };
+  }
+
+  // 1. Cek di Supabase jika terkonfigurasi
+  if (isSupabaseConfigured && supabase) {
+    try {
+      const { data, error } = await supabase
+        .from('leaderboard')
+        .select('username')
+        .ilike('username', cleanDesired)
+        .limit(1);
+
+      if (!error && data && data.length > 0) {
+        return {
+          available: false,
+          message: `Username "${cleanDesired}" sudah digunakan oleh pemain lain.`,
+        };
+      }
+    } catch (err) {
+      console.warn('Gagal cek username di Supabase:', err);
+    }
+  }
+
+  // 2. Cek di Local Storage Leaderboard
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
+      if (raw) {
+        const localList: LeaderboardEntry[] = JSON.parse(raw);
+        if (Array.isArray(localList)) {
+          const exists = localList.some(
+            (entry) =>
+              entry.username.trim().toLowerCase() === cleanDesired.toLowerCase() &&
+              entry.username.trim().toLowerCase() !== cleanCurrent.toLowerCase()
+          );
+          if (exists) {
+            return {
+              available: false,
+              message: `Username "${cleanDesired}" sudah digunakan oleh pemain lain.`,
+            };
+          }
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  return { available: true };
+}
+
+/**
+ * Memperbarui nama player lama ke nama baru di leaderboard agar tidak menduplikasi skor.
+ * Mengganti nama di record database Supabase dan localStorage.
+ */
+export async function migrateUsernameInLeaderboard(
+  oldUsername: string,
+  newUsername: string
+): Promise<void> {
+  const cleanOld = oldUsername.trim();
+  const cleanNew = newUsername.trim();
+
+  if (!cleanOld || !cleanNew || cleanOld.toLowerCase() === cleanNew.toLowerCase()) {
+    return;
+  }
+
+  // 1. Update di Supabase jika terkonfigurasi
+  if (isSupabaseConfigured && supabase) {
+    try {
+      // Ambil record yang menggunakan username lama
+      const { data: oldRecords } = await supabase
+        .from('leaderboard')
+        .select('*')
+        .ilike('username', cleanOld);
+
+      if (oldRecords && oldRecords.length > 0) {
+        // Cek apakah username baru sudah memiliki record di DB
+        const { data: newRecords } = await supabase
+          .from('leaderboard')
+          .select('*')
+          .ilike('username', cleanNew);
+
+        const bestOld = [...oldRecords].sort((a, b) => b.score - a.score)[0];
+
+        if (newRecords && newRecords.length > 0) {
+          // Username baru sudah ada: perbarui skor baru jika skor lama lebih tinggi
+          const bestNew = [...newRecords].sort((a, b) => b.score - a.score)[0];
+          if (bestOld.score > bestNew.score) {
+            await supabase
+              .from('leaderboard')
+              .update({
+                score: bestOld.score,
+                lines_cleared: bestOld.lines_cleared,
+                max_combo: bestOld.max_combo,
+                created_at: new Date().toISOString(),
+              })
+              .eq('id', bestNew.id);
+          }
+          // Hapus semua record lama agar tidak menduplikasi nama di leaderboard
+          const oldIds = oldRecords.map((r) => r.id);
+          await supabase.from('leaderboard').delete().in('id', oldIds);
+        } else {
+          // Username baru belum ada: update record lama menjadi nama baru
+          const { error: updateErr } = await supabase
+            .from('leaderboard')
+            .update({
+              username: cleanNew,
+              created_at: new Date().toISOString(),
+            })
+            .eq('id', bestOld.id);
+
+          if (!updateErr && oldRecords.length > 1) {
+            const otherOldIds = oldRecords.slice(1).map((r) => r.id);
+            supabase.from('leaderboard').delete().in('id', otherOldIds).then();
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Gagal migrasi username di Supabase:', err);
+    }
+  }
+
+  // 2. Update di LocalStorage Leaderboard Cache
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(LOCAL_LEADERBOARD_KEY);
+      if (raw) {
+        let localList: LeaderboardEntry[] = JSON.parse(raw);
+        if (Array.isArray(localList)) {
+          // Ganti nama lama menjadi nama baru
+          localList = localList.map((entry) => {
+            if (entry.username.trim().toLowerCase() === cleanOld.toLowerCase()) {
+              return {
+                ...entry,
+                username: cleanNew,
+                created_at: new Date().toISOString(),
+              };
+            }
+            return entry;
+          });
+
+          // Deduplikasi berdasarkan username (case-insensitive)
+          const dedupeMap = new Map<string, LeaderboardEntry>();
+          for (const item of localList) {
+            const key = item.username.trim().toLowerCase();
+            const ex = dedupeMap.get(key);
+            if (!ex || item.score > ex.score) {
+              dedupeMap.set(key, item);
+            }
+          }
+
+          const cleaned = Array.from(dedupeMap.values()).sort((a, b) => b.score - a.score);
+          localStorage.setItem(LOCAL_LEADERBOARD_KEY, JSON.stringify(cleaned));
+        }
+      }
+    } catch {
+      // Ignore
+    }
+  }
 }
 
 // ==========================================

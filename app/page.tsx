@@ -32,6 +32,7 @@ import {
   submitSoloScore,
   createRoomInDb,
   getRoomByCode,
+  migrateUsernameInLeaderboard,
 } from '@/lib/supabase';
 import { Flame, Sparkles } from 'lucide-react';
 import confetti from 'canvas-confetti';
@@ -153,10 +154,16 @@ export default function Home() {
   }, [stageManager]);
 
   // Update username
-  const handleUpdateUsername = (newName: string) => {
+  const handleUpdateUsername = async (newName: string) => {
+    const oldName = username;
     setUsername(newName);
     localStorage.setItem('blockarena_username', newName);
     setIsFirstVisit(false);
+
+    // Migrasi skor leaderboard lama agar tidak terduplikasi dengan skor yang sama
+    if (oldName && oldName.trim().toLowerCase() !== newName.trim().toLowerCase()) {
+      await migrateUsernameInLeaderboard(oldName, newName);
+    }
   };
 
   // Toggle Sound
@@ -278,7 +285,9 @@ export default function Home() {
           setTimeout(() => setIsShakingBoard(false), 380);
 
           let bannerTitle = 'GREAT COMBO!';
-          if (newComboVal === 3) bannerTitle = 'SUPER BLAST!';
+          if (totalLines >= 3) bannerTitle = 'TRIPLE BLAST!';
+          else if (totalLines === 2) bannerTitle = 'DOUBLE BLAST!';
+          else if (newComboVal === 3) bannerTitle = 'SUPER BLAST!';
           else if (newComboVal === 4) bannerTitle = 'MEGA STREAK!';
           else if (newComboVal >= 5) bannerTitle = 'UNSTOPPABLE!';
 

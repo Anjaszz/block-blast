@@ -125,27 +125,65 @@ export function calculateScore(
   cellsPlaced: number,
   totalLinesCleared: number,
   currentCombo: number
-): { scoreGained: number; newCombo: number } {
-  // Placement points: 10 per cell
+): {
+  scoreGained: number;
+  newCombo: number;
+  multiLineBonus: number;
+  comboBonus: number;
+  baseLinePoints: number;
+} {
+  // Placement points: 10 per cell placed
   const placementPoints = cellsPlaced * 10;
 
   if (totalLinesCleared === 0) {
     return {
       scoreGained: placementPoints,
       newCombo: 0,
+      multiLineBonus: 0,
+      comboBonus: 0,
+      baseLinePoints: 0,
     };
   }
 
-  // Lines base score: 100 for 1 line, 300 for 2, 600 for 3, 1000 for 4+
-  const baseLinePoints = totalLinesCleared * 100 + (totalLinesCleared - 1) * 100;
-  
-  // Combo multiplier: next combo gives +50% per streak
-  const newCombo = currentCombo + 1;
-  const comboBonus = Math.floor(baseLinePoints * (newCombo - 1) * 0.5);
+  // Base lines points: 1 line = 100, 2 lines = 300, 3 lines = 600, 4+ lines = 1000+
+  let baseLinePoints = 100;
+  if (totalLinesCleared === 2) baseLinePoints = 300;
+  else if (totalLinesCleared === 3) baseLinePoints = 600;
+  else if (totalLinesCleared >= 4) baseLinePoints = 1000 + (totalLinesCleared - 4) * 400;
 
-  const scoreGained = placementPoints + baseLinePoints + comboBonus;
+  // Bonus poin untuk menghancurkan sekaligus 2-3 line atau lebih
+  let multiLineBonus = 0;
+  let comboIncrement = 1;
 
-  return { scoreGained, newCombo };
+  if (totalLinesCleared === 2) {
+    multiLineBonus = 250; // Bonus Double Clear sekaligus
+    comboIncrement = 2;   // Langsung terhitung kombo x2
+  } else if (totalLinesCleared === 3) {
+    multiLineBonus = 600; // Bonus Triple Clear sekaligus
+    comboIncrement = 3;   // Langsung terhitung kombo x3
+  } else if (totalLinesCleared >= 4) {
+    multiLineBonus = 1200; // Bonus Mega Quad Clear sekaligus
+    comboIncrement = 4;   // Langsung terhitung kombo x4
+  }
+
+  // Hitung kombo baru (streak berturut-turut + bonus garis sekaligus)
+  const newCombo = currentCombo + comboIncrement;
+
+  // Kombo bonus poin: jika newCombo >= 2, berikan pengali kombo
+  let comboBonus = 0;
+  if (newCombo >= 2) {
+    comboBonus = Math.floor((baseLinePoints + multiLineBonus) * (newCombo - 1) * 0.6);
+  }
+
+  const scoreGained = placementPoints + baseLinePoints + multiLineBonus + comboBonus;
+
+  return {
+    scoreGained,
+    newCombo,
+    multiLineBonus,
+    comboBonus,
+    baseLinePoints,
+  };
 }
 
 export function hasAnyValidMove(grid: Grid, shapes: Shape[]): boolean {
