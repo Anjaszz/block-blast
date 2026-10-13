@@ -3,7 +3,7 @@
 import React, { useEffect } from 'react';
 import { RotateCcw, Trophy, Crown, Swords, Share2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { Player } from '@/lib/types';
+import { Player, StageMode } from '@/lib/types';
 
 interface GameOverModalProps {
   isOpen: boolean;
@@ -12,8 +12,10 @@ interface GameOverModalProps {
   maxCombo: number;
   isNewHigh: boolean;
   gameMode: 'solo' | 'stage';
+  stageMode?: StageMode;
   stageWinner: Player | null;
   stageRank: number | null;
+  localPlayerId?: string;
   onRestart: () => void;
   onBackToMenu: () => void;
 }
@@ -25,13 +27,20 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
   maxCombo,
   isNewHigh,
   gameMode,
+  stageMode = 'survival',
   stageWinner,
   stageRank,
+  localPlayerId,
   onRestart,
   onBackToMenu,
 }) => {
+  const isActualWinner =
+    gameMode === 'stage'
+      ? Boolean(stageWinner && localPlayerId ? stageWinner.id === localPlayerId : stageRank === 1)
+      : false;
+
   useEffect(() => {
-    if (isOpen && (isNewHigh || stageRank === 1)) {
+    if (isOpen && (isNewHigh || isActualWinner)) {
       try {
         confetti({
           particleCount: 80,
@@ -43,7 +52,7 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         // Confetti optional
       }
     }
-  }, [isOpen, isNewHigh, stageRank]);
+  }, [isOpen, isNewHigh, isActualWinner]);
 
   if (!isOpen) return null;
 
@@ -72,18 +81,19 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
             </div>
           )}
 
-          {gameMode === 'stage' && stageRank && (
+          {gameMode === 'stage' && (
             <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 bg-[#181d2a] border border-[#262e3f] rounded-lg">
-              {stageRank === 1 ? (
+              {isActualWinner ? (
                 <>
                   <Crown className="w-4 h-4 text-[#facc15]" />
                   <span className="text-xs font-black text-[#facc15]">
-                    JUARA 1 (LAST SURVIVOR)
+                    {stageMode === 'timer' ? 'JUARA 1 (SKOR TERTINGGI)' : 'JUARA 1 (LAST SURVIVOR)'}
                   </span>
                 </>
               ) : (
                 <span className="text-xs font-bold text-[#94a3b8]">
-                  PERINGKAT #{stageRank} (TERELIMINASI)
+                  PERINGKAT #{stageRank && stageRank > 1 ? stageRank : 2}
+                  {stageMode === 'timer' ? '' : ' (TERELIMINASI)'}
                 </span>
               )}
             </div>
@@ -117,7 +127,9 @@ export const GameOverModal: React.FC<GameOverModalProps> = ({
         {/* Stage Winner Mention */}
         {gameMode === 'stage' && stageWinner && (
           <div className="p-2.5 bg-[#181d2a] border border-[#262e3f] rounded-lg text-xs flex items-center justify-between">
-            <span className="text-[#94a3b8]">JUARA STAGE (SURVIVOR):</span>
+            <span className="text-[#94a3b8]">
+              {stageMode === 'timer' ? 'JUARA STAGE (SKOR TERTINGGI):' : 'JUARA STAGE (SURVIVOR):'}
+            </span>
             <span className="font-bold text-[#facc15] flex items-center gap-1">
               <Crown className="w-3.5 h-3.5" />
               {stageWinner.username} ({stageWinner.score.toLocaleString()} pts)

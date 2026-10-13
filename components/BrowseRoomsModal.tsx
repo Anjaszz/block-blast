@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search, X, Lock, Globe, RotateCcw, Users, KeyRound, ArrowRight } from 'lucide-react';
+import { Search, X, Lock, Globe, RotateCcw, Users, KeyRound, ArrowRight, Swords, Timer } from 'lucide-react';
 import { RoomInfo } from '@/lib/types';
 import { fetchRoomsFromDb } from '@/lib/supabase';
 
@@ -199,6 +199,17 @@ export const BrowseRoomsModal: React.FC<BrowseRoomsModalProps> = ({
                       <span className="font-bold text-xs text-white truncate">
                         {room.name}
                       </span>
+                      {room.mode === 'timer' ? (
+                        <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-[#2b1417] text-[#ef4444] text-[9px] font-bold rounded border border-[#ef4444]/40">
+                          <Timer className="w-2.5 h-2.5" />
+                          TIMER {room.duration_minutes || 2}M
+                        </span>
+                      ) : (
+                        <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-[#17231c] text-[#10b981] text-[9px] font-bold rounded border border-[#10b981]/40">
+                          <Swords className="w-2.5 h-2.5" />
+                          SURVIVAL
+                        </span>
+                      )}
                       {room.is_private ? (
                         <span className="flex items-center gap-0.5 px-1.5 py-0.5 bg-[#2b1417] text-[#ef4444] text-[9px] font-bold rounded border border-[#ef4444]/40">
                           <Lock className="w-2.5 h-2.5" />

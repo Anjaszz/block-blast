@@ -24,12 +24,16 @@ export interface Player {
   eliminatedAt?: number; // Timestamp when player got eliminated (for Last Man Standing survival rank)
 }
 
+export type StageMode = 'survival' | 'timer';
+
 export interface RoomInfo {
   id: string;
   code: string;
   name: string;
   is_private: boolean;
   password?: string;
+  mode?: StageMode;
+  duration_minutes?: number; // 2, 5, or 10
   player_count: number;
   max_players: number;
   status: 'waiting' | 'playing' | 'finished';
@@ -43,6 +47,8 @@ export interface RoomState {
   name: string;
   is_private: boolean;
   password?: string;
+  mode: StageMode;
+  duration_minutes?: number;
   status: 'waiting' | 'countdown' | 'playing' | 'finished';
   timeLeft?: number;
   players: Player[];

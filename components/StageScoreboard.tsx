@@ -1,44 +1,70 @@
 'use client';
 
 import React from 'react';
-import { Player } from '@/lib/types';
-import { Crown, Flame, Swords } from 'lucide-react';
+import { Player, StageMode } from '@/lib/types';
+import { Crown, Flame, Swords, Timer } from 'lucide-react';
 
 interface StageScoreboardProps {
   players: Player[];
   localPlayerId: string;
   roomCode: string;
+  mode?: StageMode;
+  timeLeft?: number;
 }
 
 export const StageScoreboard: React.FC<StageScoreboardProps> = ({
   players,
   localPlayerId,
   roomCode,
+  mode = 'survival',
+  timeLeft = 0,
 }) => {
   const maxScore = Math.max(...players.map((p) => p.score), 100);
 
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const isTimerMode = mode === 'timer';
+  const isUrgent = isTimerMode && timeLeft <= 30 && timeLeft > 0;
+
   return (
     <div className="w-full max-w-[340px] bg-[#11141d] rounded-xl border border-[#202636] p-3.5 flex flex-col gap-3">
-      {/* Header with Survival Badge (No countdown timer) */}
+      {/* Header with Mode Badge & Timer */}
       <div className="flex items-center justify-between pb-2.5 border-b border-[#202636]">
         <div>
           <div className="text-[10px] uppercase font-mono tracking-wider text-[#94a3b8]">STAGE ROOM</div>
           <div className="font-mono font-bold text-sm tracking-wider text-[#3b82f6]">{roomCode}</div>
         </div>
 
-        <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#181d2a] border border-[#262e3f] rounded">
-          <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse shrink-0" />
-          <span className="font-mono font-bold text-xs text-white tracking-wider flex items-center gap-1">
-            <Swords className="w-3 h-3 text-[#ef4444]" />
-            SURVIVAL
-          </span>
-        </div>
+        {isTimerMode ? (
+          <div
+            className={`flex items-center gap-2 px-3 py-1 border rounded transition-all ${
+              isUrgent
+                ? 'bg-[#3b1219] border-[#ef4444] animate-pulse text-[#ef4444]'
+                : 'bg-[#181d2a] border-[#262e3f] text-white'
+            }`}
+          >
+            <Timer className={`w-3.5 h-3.5 ${isUrgent ? 'text-[#ef4444]' : 'text-[#3b82f6]'}`} />
+            <span className="font-mono font-bold text-sm tracking-widest">{formatTime(timeLeft)}</span>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5 px-2.5 py-1 bg-[#181d2a] border border-[#262e3f] rounded">
+            <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse shrink-0" />
+            <span className="font-mono font-bold text-xs text-white tracking-wider flex items-center gap-1">
+              <Swords className="w-3 h-3 text-[#ef4444]" />
+              SURVIVAL
+            </span>
+          </div>
+        )}
       </div>
 
       {/* 5-Player Leaderboard Table */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-[11px] font-mono text-[#94a3b8] px-1">
-          <span>RANK & PLAYER (SURVIVOR)</span>
+          <span>RANK & PLAYER {isTimerMode ? '(HIGH SCORE)' : '(SURVIVOR)'}</span>
           <span>SCORE</span>
         </div>
 

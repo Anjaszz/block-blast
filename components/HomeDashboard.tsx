@@ -170,7 +170,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
       {/* Footer System Status */}
       <div className="mt-4 text-center">
         <span className="text-[11px] font-mono text-[#64748b]">
-         Created By Anjaszzz
+         Created By <a className='text-red-500 font-semibold' href="https://www.google.com/search?q=Anjas+Rani&oq=Anjas+Rani" target='_blank'>Anjaszzz</a>
         </span>
       </div>
     </div>

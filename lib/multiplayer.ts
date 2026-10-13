@@ -1,5 +1,5 @@
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { Player, RoomState } from './types';
+import { Player, RoomState, StageMode } from './types';
 import { supabase, isSupabaseConfigured, generateRoomCode, deleteRoomFromDb } from './supabase';
 export { generateRoomCode };
 
@@ -22,9 +22,26 @@ export interface MultiplayerCallbacks {
   onRoomClosed?: (message: string) => void;
 }
 
-// Helper to rank players primarily by Survival (Last Man Standing), then by score
-export function sortStagePlayers(players: Player[]): Player[] {
+// Helper to rank players:
+// - Survival: primarily by Survival (Last Man Standing), then by score
+// - Timer: primarily by Score (Highest Score Rush), then by alive status & survival time
+export function sortStagePlayers(players: Player[], mode: StageMode = 'survival'): Player[] {
   return [...players].sort((a, b) => {
+    if (mode === 'timer') {
+      // In Timer mode, highest score wins!
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      // If score is tied, alive player beats dead player
+      if (a.isAlive && !b.isAlive) return -1;
+      if (!a.isAlive && b.isAlive) return 1;
+      // If both dead, survived longer wins
+      const aElim = a.eliminatedAt || 0;
+      const bElim = b.eliminatedAt || 0;
+      return bElim - aElim;
+    }
+
+    // Default: Survival (Last Man Standing)
     // 1. Alive players ALWAYS rank above eliminated players
     if (a.isAlive && !b.isAlive) return -1;
     if (!a.isAlive && b.isAlive) return 1;
@@ -52,8 +69,10 @@ export class StageManager {
   private localPlayer: Player;
   private isBotMode: boolean = false;
   private botInterval: NodeJS.Timeout | null = null;
+  private timerInterval: NodeJS.Timeout | null = null;
   private callbacks: MultiplayerCallbacks;
   public state: RoomState;
+  private initialPlayerCount: number = 0;
 
   constructor(localPlayer: Player, callbacks: MultiplayerCallbacks) {
     this.localPlayer = localPlayer;
@@ -67,6 +86,9 @@ export class StageManager {
       maxPlayers: 5,
       winner: null,
       host_id: localPlayer.id,
+      mode: 'survival',
+      duration_minutes: 2,
+      timeLeft: 0,
     };
   }
 
@@ -79,13 +101,18 @@ export class StageManager {
     roomName: string = '',
     isPrivate: boolean = false,
     hostId: string = '',
-    asBotMode: boolean = false
+    asBotMode: boolean = false,
+    mode: StageMode = 'survival',
+    durationMinutes: number = 2
   ) {
     this.roomCode = code.toUpperCase();
     this.state.code = this.roomCode;
     this.state.name = roomName || `Stage ${this.roomCode}`;
     this.state.is_private = isPrivate;
     this.state.host_id = hostId || this.localPlayer.id;
+    this.state.mode = mode;
+    this.state.duration_minutes = durationMinutes;
+    this.state.timeLeft = mode === 'timer' ? durationMinutes * 60 : 0;
     this.isBotMode = asBotMode;
 
     if (this.isBotMode) {
@@ -146,13 +173,19 @@ export class StageManager {
     });
 
     // Handle game start broadcast
-    this.channel.on('broadcast', { event: 'game_start' }, () => {
+    this.channel.on('broadcast', { event: 'game_start' }, ({ payload }) => {
+      if (payload?.mode) {
+        this.state.mode = payload.mode;
+      }
+      if (payload?.duration_minutes) {
+        this.state.duration_minutes = payload.duration_minutes;
+      }
       this.startGame();
     });
 
     // Handle game finished broadcast
     this.channel.on('broadcast', { event: 'game_finished' }, ({ payload }) => {
-      this.finishGame(payload?.winner || null);
+      this.finishGame(payload?.winner || null, payload?.ranked || undefined);
     });
 
     this.channel.subscribe(async (status) => {
@@ -166,7 +199,23 @@ export class StageManager {
 
   private updatePlayers(players: Player[]) {
     // Ensure local player is included with latest local state
-    const merged = players.map((p) => (p.id === this.localPlayer.id ? this.localPlayer : p));
+    // AND preserve in-game state (score, isAlive, eliminatedAt) for remote players so presence doesn't wipe them out!
+    const merged = players.map((p) => {
+      if (p.id === this.localPlayer.id) return this.localPlayer;
+      const existing = this.state.players.find((ep) => ep.id === p.id);
+      if (existing) {
+        return {
+          ...p,
+          score: existing.score,
+          combo: existing.combo,
+          linesCleared: existing.linesCleared,
+          isAlive: existing.isAlive,
+          eliminatedAt: existing.eliminatedAt,
+        };
+      }
+      return p;
+    });
+
     if (!merged.some((p) => p.id === this.localPlayer.id)) {
       merged.push(this.localPlayer);
     }
@@ -176,8 +225,8 @@ export class StageManager {
       p.accentColor = PLAYER_COLORS[idx % PLAYER_COLORS.length];
     });
 
-    // Limit to max 5 players, sorted by Survival rank
-    const sorted = sortStagePlayers(merged.slice(0, 5));
+    // Limit to max 5 players, sorted by active mode
+    const sorted = sortStagePlayers(merged.slice(0, 5), this.state.mode);
     sorted.forEach((p, index) => {
       p.rank = index + 1;
     });
@@ -189,18 +238,31 @@ export class StageManager {
   }
 
   private updatePlayerScore(player: Player) {
+    let playerExisted = false;
     const list = this.state.players.map((p) => {
       if (p.id === player.id) {
+        playerExisted = true;
+        // Critical: once eliminated, player CANNOT become alive again
+        const isAlive = !p.isAlive ? false : Boolean(player.isAlive);
         const elimAt =
-          !player.isAlive && p.isAlive && !player.eliminatedAt
-            ? Date.now()
-            : player.eliminatedAt || p.eliminatedAt;
-        return { ...player, eliminatedAt: elimAt };
+          !isAlive && !p.eliminatedAt
+            ? player.eliminatedAt || Date.now()
+            : p.eliminatedAt || player.eliminatedAt;
+        return {
+          ...p,
+          ...player,
+          isAlive,
+          eliminatedAt: elimAt,
+        };
       }
       return p;
     });
 
-    const sorted = sortStagePlayers(list);
+    if (!playerExisted) {
+      list.push(player);
+    }
+
+    const sorted = sortStagePlayers(list, this.state.mode);
     sorted.forEach((p, index) => {
       p.rank = index + 1;
     });
@@ -240,13 +302,24 @@ export class StageManager {
 
     const totalPlayers = this.state.players.length;
     const alivePlayers = this.state.players.filter((p) => p.isAlive);
+    const effectiveTotal = Math.max(totalPlayers, this.initialPlayerCount);
 
-    // In a multiplayer match (2+ players), when exactly 1 survivor is left: they win immediately!
-    if (totalPlayers >= 2 && alivePlayers.length === 1) {
-      this.finishGame(alivePlayers[0]);
-    } else if (alivePlayers.length === 0) {
-      // If all players are eliminated, finish and rank by survival time / score
-      this.finishGame();
+    if (this.state.mode === 'survival') {
+      // In a multiplayer match (2+ players), when exactly 1 survivor is left: they win immediately!
+      if (effectiveTotal >= 2 && alivePlayers.length === 1) {
+        this.finishGame(alivePlayers[0]);
+      } else if (alivePlayers.length === 0) {
+        // If all players are eliminated, finish and rank by survival time / score
+        this.finishGame();
+      }
+    } else {
+      // Mode TIMER:
+      // Game finishes when time expires!
+      // The only early finish is if ALL players are eliminated (no one left alive).
+      // If 1 player dies while others are still playing, the game DOES NOT finish early.
+      if (alivePlayers.length === 0) {
+        this.finishGame();
+      }
     }
   }
 
@@ -264,32 +337,88 @@ export class StageManager {
       this.channel.send({
         type: 'broadcast',
         event: 'game_start',
-        payload: {},
+        payload: {
+          mode: this.state.mode,
+          duration_minutes: this.state.duration_minutes,
+        },
       });
       this.startGame();
     }
   }
 
   private startGame() {
+    this.initialPlayerCount = this.state.players.length;
     this.state.status = 'playing';
+
+    if (this.timerInterval) clearInterval(this.timerInterval);
+
+    if (this.state.mode === 'timer') {
+      const totalSeconds = (this.state.duration_minutes || 2) * 60;
+      this.state.timeLeft = totalSeconds;
+
+      this.timerInterval = setInterval(() => {
+        if (this.state.status !== 'playing') {
+          if (this.timerInterval) clearInterval(this.timerInterval);
+          return;
+        }
+
+        const newTimeLeft = Math.max(0, (this.state.timeLeft ?? 0) - 1);
+        this.state.timeLeft = newTimeLeft;
+        this.callbacks.onRoomStateChange({ ...this.state });
+
+        if (newTimeLeft <= 0) {
+          if (this.timerInterval) clearInterval(this.timerInterval);
+          this.finishGame();
+        }
+      }, 1000);
+    }
+
     this.callbacks.onGameStart();
     this.callbacks.onRoomStateChange({ ...this.state });
   }
 
-  public finishGame(winnerParam?: Player | null) {
+  public finishGame(winnerParam?: Player | null, rankedParam?: Player[]) {
     if (this.state.status === 'finished') return;
     if (this.botInterval) clearInterval(this.botInterval);
+    if (this.timerInterval) clearInterval(this.timerInterval);
 
     this.state.status = 'finished';
-    const ranked = sortStagePlayers(this.state.players);
+
+    let ranked: Player[];
+    if (rankedParam && rankedParam.length > 0) {
+      ranked = [...rankedParam];
+    } else {
+      ranked = sortStagePlayers(this.state.players, this.state.mode);
+    }
+
+    // Determine the absolute winner:
+    const alivePlayers = this.state.players.filter((p) => p.isAlive);
+    let winner: Player | null = null;
+
+    if (this.state.mode === 'timer') {
+      // IN TIMER MODE: Highest score (ranked[0]) is ALWAYS the absolute winner!
+      // Even if the player with highest score was eliminated earlier.
+      winner = ranked[0] || null;
+    } else if (winnerParam !== undefined && winnerParam !== null) {
+      winner = winnerParam;
+    } else {
+      // In survival mode, last remaining alive player is the winner
+      winner = alivePlayers[0] || ranked[0] || null;
+    }
+
+    // CRITICAL: The winner MUST be placed at index 0 (Rank 1) in ranked!
+    if (winner) {
+      const winnerIdx = ranked.findIndex((p) => p.id === winner.id);
+      if (winnerIdx > 0) {
+        const [w] = ranked.splice(winnerIdx, 1);
+        ranked.unshift(w);
+      }
+    }
+
     ranked.forEach((p, index) => {
       p.rank = index + 1;
     });
     this.state.players = ranked;
-
-    // Winner is designated winnerParam, or first alive player (The Last Survivor), or #1 ranked
-    const alivePlayers = ranked.filter((p) => p.isAlive);
-    const winner = winnerParam !== undefined ? winnerParam : (alivePlayers[0] || ranked[0] || null);
     this.state.winner = winner;
 
     this.callbacks.onGameOver(winner, ranked);
@@ -299,7 +428,7 @@ export class StageManager {
       this.channel.send({
         type: 'broadcast',
         event: 'game_finished',
-        payload: { winner },
+        payload: { winner, ranked },
       });
     }
   }
@@ -356,7 +485,7 @@ export class StageManager {
         return p;
       });
 
-      const sorted = sortStagePlayers(this.state.players);
+      const sorted = sortStagePlayers(this.state.players, this.state.mode);
       sorted.forEach((p, idx) => {
         p.rank = idx + 1;
       });
@@ -369,6 +498,7 @@ export class StageManager {
 
   public leave() {
     if (this.botInterval) clearInterval(this.botInterval);
+    if (this.timerInterval) clearInterval(this.timerInterval);
 
     const isMeHost = this.state.host_id === this.localPlayer.id || Boolean(this.localPlayer.isHost);
 

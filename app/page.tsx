@@ -14,7 +14,7 @@ import { UsernameModal } from '@/components/UsernameModal';
 import { GameOverModal } from '@/components/GameOverModal';
 import { ConfirmExitModal } from '@/components/ConfirmExitModal';
 
-import { Grid, Shape, Player, RoomState, RoomInfo } from '@/lib/types';
+import { Grid, Shape, Player, RoomState, RoomInfo, StageMode } from '@/lib/types';
 import {
   createEmptyGrid,
   canPlaceShape,
@@ -33,8 +33,10 @@ import {
   createRoomInDb,
   getRoomByCode,
   migrateUsernameInLeaderboard,
+  fetchRoomsFromDb,
+  deleteRoomFromDb,
 } from '@/lib/supabase';
-import { Flame, Sparkles } from 'lucide-react';
+import { Flame, Sparkles, Skull } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function Home() {
@@ -69,6 +71,7 @@ export default function Home() {
   const [maxCombo, setMaxCombo] = useState(0);
   const [linesCleared, setLinesCleared] = useState(0);
   const [isGameOver, setIsGameOver] = useState(false);
+  const [isStageEliminated, setIsStageEliminated] = useState(false);
   const [isNewHigh, setIsNewHigh] = useState(false);
 
   // Festive Combo Celebration State
@@ -131,26 +134,51 @@ export default function Home() {
             if (room.is_private) {
               setIsBrowseRoomsOpen(true);
             } else {
-              initAndJoinRoom(room.code, room.name, room.is_private, room.host_id, storedName || 'Player');
+              initAndJoinRoom(
+                room.code,
+                room.name,
+                room.is_private,
+                room.host_id,
+                storedName || 'Player',
+                room.mode || 'survival',
+                room.duration_minutes || 2
+              );
             }
           }
         });
       }
     }
 
+    // Clean up any room previously hosted by this player if now back on dashboard
+    if (storedId) {
+      fetchRoomsFromDb().then((rooms) => {
+        rooms.forEach((r) => {
+          if (r.host_id === storedId) {
+            deleteRoomFromDb(r.code);
+          }
+        });
+      }).catch(() => {});
+    }
+
     // Initialize shapes
     setShapes(generateShapeTrio());
   }, []);
 
-  // Cleanup room when closing tab/browser
+  // Cleanup room when closing tab/browser (beforeunload, pagehide, unload)
   useEffect(() => {
-    const handleBeforeUnload = () => {
+    const handleExit = () => {
       if (stageManager) {
         stageManager.leave();
       }
     };
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('beforeunload', handleExit);
+    window.addEventListener('pagehide', handleExit);
+    window.addEventListener('unload', handleExit);
+    return () => {
+      window.removeEventListener('beforeunload', handleExit);
+      window.removeEventListener('pagehide', handleExit);
+      window.removeEventListener('unload', handleExit);
+    };
   }, [stageManager]);
 
   // Update username
@@ -184,6 +212,7 @@ export default function Home() {
     setMaxCombo(0);
     setLinesCleared(0);
     setIsGameOver(false);
+    setIsStageEliminated(false);
     setIsNewHigh(false);
   }, []);
 
@@ -199,13 +228,13 @@ export default function Home() {
       const activeShapes = currentShapes.filter((s): s is Shape => s !== null);
       if (activeShapes.length > 0 && !hasAnyValidMove(currentGrid, activeShapes)) {
         soundManager.playGameOver();
-        setIsGameOver(true);
 
         const evalScore = currentScore !== undefined ? currentScore : score;
         const evalLines = currentLines !== undefined ? currentLines : linesCleared;
         const evalCombo = currentMaxCombo !== undefined ? currentMaxCombo : maxCombo;
 
         if (currentView === 'solo') {
+          setIsGameOver(true);
           // Check personal best
           const storedBest = typeof window !== 'undefined'
             ? parseInt(localStorage.getItem('blockarena_solo_high_score') || '0', 10)
@@ -223,6 +252,7 @@ export default function Home() {
           // SUBMIT HANYA UNTUK SOLO: Skor tertinggi per 1 permainan (bukan akumulasi!)
           submitSoloScore(username, evalScore, evalLines, evalCombo);
         } else if (currentView === 'stage_playing' && stageManager) {
+          setIsStageEliminated(true);
           // Notify stage players that local player is finished (eliminated)
           stageManager.broadcastScore(evalScore, combo, evalLines, false);
           const currentPlayers = stageManager.getRoomState().players;
@@ -367,14 +397,14 @@ export default function Home() {
 
   // Cell Click (click to place)
   const handleCellClick = (row: number, col: number) => {
-    if (isGameOver) return;
+    if (isGameOver || isStageEliminated) return;
     if (!selectedShape) return;
     handleExecutePlacement(selectedShape, row, col);
   };
 
   // Cell Hover
   const handleCellHover = (row: number, col: number) => {
-    if (row < 0 || col < 0) {
+    if (isGameOver || isStageEliminated || row < 0 || col < 0) {
       setHoverPos(null);
     } else {
       setHoverPos({ row, col });
@@ -383,6 +413,7 @@ export default function Home() {
 
   // Start Dragging
   const handleStartDrag = (shape: Shape, e: React.PointerEvent) => {
+    if (isGameOver || isStageEliminated) return;
     soundManager.playPickup();
     setSelectedShape(shape);
     setDragState({
@@ -441,7 +472,9 @@ export default function Home() {
     name: string,
     isPrivate: boolean,
     hostId: string,
-    currentUserName: string
+    currentUserName: string,
+    mode: StageMode = 'survival',
+    durationMinutes: number = 2
   ) => {
     if (stageManager) {
       stageManager.leave();
@@ -465,10 +498,12 @@ export default function Home() {
       },
       onGameStart: () => {
         handleRestartBoard();
+        setIsStageEliminated(false);
         setCurrentView('stage_playing');
       },
       onGameOver: (winner, rankedPlayers) => {
         setStageWinner(winner);
+        setIsStageEliminated(false);
         setIsGameOver(true);
         const list =
           rankedPlayers && rankedPlayers.length > 0
@@ -476,18 +511,29 @@ export default function Home() {
             : manager
             ? manager.getRoomState().players
             : [];
-        const myRank = list.findIndex((p) => p.id === playerId) + 1;
-        setStageRank(myRank > 0 ? myRank : winner?.id === playerId ? 1 : 2);
+        let myRank = list.findIndex((p) => p.id === playerId) + 1;
+        if (winner && winner.id === playerId) {
+          myRank = 1;
+        } else if (winner && winner.id !== playerId && (myRank <= 1 || myRank === 0)) {
+          myRank = 2;
+        }
+        setStageRank(myRank > 0 ? myRank : 2);
       },
       onRoomClosed: (message) => {
         alert(message);
+        if (typeof window !== 'undefined') {
+          sessionStorage.removeItem('blockarena_active_room');
+        }
         setStageManager(null);
         setRoomState(null);
         setCurrentView('dashboard');
       },
     });
 
-    manager.joinOrCreate(code, name, isPrivate, hostId, false);
+    if (typeof window !== 'undefined') {
+      sessionStorage.setItem('blockarena_active_room', code);
+    }
+    manager.joinOrCreate(code, name, isPrivate, hostId, false, mode, durationMinutes);
     setStageManager(manager);
     setRoomState(manager.getRoomState());
     setCurrentView('room_lobby');
@@ -504,6 +550,8 @@ export default function Home() {
     name: string;
     is_private: boolean;
     password?: string;
+    mode?: StageMode;
+    duration_minutes?: number;
   }) => {
     const room = await createRoomInDb({
       name: params.name,
@@ -511,14 +559,32 @@ export default function Home() {
       password: params.password,
       host_name: username || 'Player',
       host_id: playerId,
+      mode: params.mode,
+      duration_minutes: params.duration_minutes,
     });
 
-    initAndJoinRoom(room.code, room.name, room.is_private, playerId, username);
+    initAndJoinRoom(
+      room.code,
+      room.name,
+      room.is_private,
+      playerId,
+      username,
+      room.mode || params.mode || 'survival',
+      room.duration_minutes || params.duration_minutes || 2
+    );
   };
 
   // Button 3: Join from Browse Rooms
   const handleJoinExistingRoom = (room: RoomInfo) => {
-    initAndJoinRoom(room.code, room.name, room.is_private, room.host_id, username);
+    initAndJoinRoom(
+      room.code,
+      room.name,
+      room.is_private,
+      room.host_id,
+      username,
+      room.mode || 'survival',
+      room.duration_minutes || 2
+    );
   };
 
   // Start Stage match by Host
@@ -530,6 +596,9 @@ export default function Home() {
 
   // Leave Room
   const handleLeaveRoom = () => {
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('blockarena_active_room');
+    }
     if (stageManager) {
       stageManager.leave();
       setStageManager(null);
@@ -552,11 +621,15 @@ export default function Home() {
   // Confirm Exit from active game
   const handleConfirmExit = () => {
     setIsConfirmExitOpen(false);
+    if (typeof window !== 'undefined') {
+      sessionStorage.removeItem('blockarena_active_room');
+    }
     if (stageManager) {
       stageManager.leave();
       setStageManager(null);
     }
     setRoomState(null);
+    setIsStageEliminated(false);
     setCurrentView('dashboard');
   };
 
@@ -646,6 +719,27 @@ export default function Home() {
                   combo={combo}
                 />
 
+                {/* Spectating Overlay saat tereliminasi di Stage Mode (menunggu permainan pemain lain selesai) */}
+                {currentView === 'stage_playing' && isStageEliminated && !isGameOver && (
+                  <div className="absolute inset-0 z-30 bg-black/80 backdrop-blur-[2px] rounded-xl flex flex-col items-center justify-center p-6 text-center border border-[#ef4444]/40">
+                    <div className="w-12 h-12 rounded-full bg-[#2a1417] border border-[#ef4444] flex items-center justify-center mb-3">
+                      <Skull className="w-6 h-6 text-[#ef4444]" />
+                    </div>
+                    <span className="text-sm font-black font-mono tracking-wider text-[#ef4444] uppercase mb-1">
+                      KAMU TERELIMINASI
+                    </span>
+                    <p className="text-xs text-[#94a3b8] max-w-[240px] mb-3">
+                      {roomState?.mode === 'timer'
+                        ? 'Menunggu waktu habis... Skormu tetap tersimpan untuk penentuan juara skor tertinggi!'
+                        : 'Menunggu pemain lain menyelesaikan pertandingan...'}
+                    </p>
+                    <div className="flex items-center gap-2 px-3 py-1 bg-[#161a25] border border-[#222938] rounded-full text-[11px] font-mono text-[#38bdf8]">
+                      <span className="w-2 h-2 rounded-full bg-[#38bdf8] animate-ping" />
+                      <span>LIVE SPECTATING</span>
+                    </div>
+                  </div>
+                )}
+
                 {/* Meriah Festive Combo Banner Overlay */}
                 {comboCelebration && (
                   <div className="absolute inset-0 z-30 pointer-events-none flex flex-col items-center justify-center">
@@ -671,6 +765,7 @@ export default function Home() {
                 shapes={shapes}
                 selectedShapeId={selectedShape?.id || null}
                 onSelectShape={(shape) => {
+                  if (isGameOver || isStageEliminated) return;
                   soundManager.playPickup();
                   setSelectedShape((prev) => (prev?.id === shape.id ? null : shape));
                 }}
@@ -689,6 +784,8 @@ export default function Home() {
                   players={roomState.players}
                   localPlayerId={playerId}
                   roomCode={roomState.code}
+                  mode={roomState.mode}
+                  timeLeft={roomState.timeLeft}
                 />
 
                 <button
@@ -772,8 +869,10 @@ export default function Home() {
         maxCombo={maxCombo}
         isNewHigh={isNewHigh}
         gameMode={currentView === 'stage_playing' ? 'stage' : 'solo'}
+        stageMode={roomState?.mode || 'survival'}
         stageWinner={stageWinner}
         stageRank={stageRank}
+        localPlayerId={playerId}
         onRestart={() => {
           if (currentView === 'stage_playing') {
             if (stageManager) stageManager.leave();

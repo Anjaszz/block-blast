@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Plus, X, Lock, Globe, Shield } from 'lucide-react';
+import { Plus, X, Lock, Globe, Shield, Swords, Timer, Clock } from 'lucide-react';
+import { StageMode } from '@/lib/types';
 
 interface CreateRoomModalProps {
   isOpen: boolean;
@@ -10,6 +11,8 @@ interface CreateRoomModalProps {
     name: string;
     is_private: boolean;
     password?: string;
+    mode: StageMode;
+    duration_minutes?: number;
   }) => void;
 }
 
@@ -21,6 +24,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
   const [roomName, setRoomName] = useState('');
   const [isPrivate, setIsPrivate] = useState(false);
   const [password, setPassword] = useState('');
+  const [gameMode, setGameMode] = useState<StageMode>('survival');
+  const [durationMinutes, setDurationMinutes] = useState<number>(2);
   const [error, setError] = useState('');
 
   if (!isOpen) return null;
@@ -41,6 +46,8 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
       name: roomName.trim(),
       is_private: isPrivate,
       password: isPrivate ? password.trim() : undefined,
+      mode: gameMode,
+      duration_minutes: gameMode === 'timer' ? durationMinutes : undefined,
     });
     onClose();
   };
@@ -89,6 +96,74 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
               className="w-full bg-[#161a25] border border-[#262e3f] text-white text-xs font-medium px-3 py-2.5 rounded-lg focus:outline-none focus:border-[#3b82f6]"
             />
           </div>
+
+          {/* Mode Permainan: Survival vs Timer */}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-white">MODE PERMAINAN</label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setGameMode('survival')}
+                className={`flex flex-col items-center justify-center gap-1 py-2.5 px-3 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${
+                  gameMode === 'survival'
+                    ? 'bg-[#1b2333] border-[#2563eb] text-[#3b82f6]'
+                    : 'bg-[#161a25] border-[#202636] text-[#94a3b8] hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Swords className="w-3.5 h-3.5" />
+                  <span>SURVIVAL</span>
+                </div>
+                <span className="text-[10px] font-normal text-[#94a3b8]">Last Man Standing</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setGameMode('timer')}
+                className={`flex flex-col items-center justify-center gap-1 py-2.5 px-3 rounded-lg border text-xs font-bold transition-colors cursor-pointer ${
+                  gameMode === 'timer'
+                    ? 'bg-[#261518] border-[#dc2626] text-[#ef4444]'
+                    : 'bg-[#161a25] border-[#202636] text-[#94a3b8] hover:text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <Timer className="w-3.5 h-3.5" />
+                  <span>TIMER RUSH</span>
+                </div>
+                <span className="text-[10px] font-normal text-[#94a3b8]">Balapan Skor Waktu</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Pilihan Durasi Timer (Hanya jika mode Timer) */}
+          {gameMode === 'timer' && (
+            <div className="flex flex-col gap-1.5 p-3 bg-[#181d2a] border border-[#262e3f] rounded-lg animate-fadeIn">
+              <label className="text-xs font-semibold text-[#ef4444] flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5" />
+                <span>PILIH DURASI WAKTU</span>
+              </label>
+              <div className="grid grid-cols-3 gap-2 mt-1">
+                {[2, 5, 10].map((mins) => (
+                  <button
+                    key={mins}
+                    type="button"
+                    onClick={() => setDurationMinutes(mins)}
+                    className={`py-2 px-2 rounded-lg border text-xs font-bold transition-all cursor-pointer flex flex-col items-center justify-center ${
+                      durationMinutes === mins
+                        ? 'bg-[#dc2626] border-[#ef4444] text-white shadow-lg shadow-red-900/30'
+                        : 'bg-[#121622] border-[#222938] text-[#94a3b8] hover:text-white'
+                    }`}
+                  >
+                    <span className="font-mono text-sm">{mins} MENIT</span>
+                    <span className="text-[9px] opacity-80">{mins * 60} detik</span>
+                  </button>
+                ))}
+              </div>
+              <span className="text-[10px] text-[#94a3b8] mt-1">
+                Pemenang adalah pemain dengan perolehan skor tertinggi saat waktu habis!
+              </span>
+            </div>
+          )}
 
           {/* Room Visibility Selection */}
           <div className="flex flex-col gap-1.5">
@@ -151,7 +226,7 @@ export const CreateRoomModal: React.FC<CreateRoomModalProps> = ({
 
           {/* Info Badge */}
           <div className="p-2.5 bg-[#161a25] border border-[#202636] rounded-lg text-[11px] text-[#94a3b8] leading-relaxed">
-            Maksimal <strong className="text-white">5 pemain</strong> per stage. Pertandingan dimulai serentak dengan skor real-time!
+            Maksimal <strong className="text-white">5 pemain</strong> per stage. {gameMode === 'timer' ? `Durasi match: ${durationMinutes} menit.` : 'Mode bertahan hingga tersisa 1 pemenang.'}
           </div>
 
           {/* Submit */}

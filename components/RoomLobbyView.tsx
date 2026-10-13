@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Users, Copy, Check, Play, Share2, Lock, Globe, ArrowLeft, Crown } from 'lucide-react';
+import { Users, Copy, Check, Play, Share2, Lock, Globe, ArrowLeft, Crown, Swords, Timer } from 'lucide-react';
 import { Player, RoomState } from '@/lib/types';
 
 interface RoomLobbyViewProps {
@@ -50,6 +50,18 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
         </button>
 
         <div className="flex items-center gap-2">
+          {roomState.mode === 'timer' ? (
+            <span className="flex items-center gap-1 px-2.5 py-1 bg-[#261518] text-[#ef4444] text-[10px] font-bold rounded border border-[#ef4444]/40">
+              <Timer className="w-3 h-3" />
+              TIMER RUSH ({roomState.duration_minutes || 2}M)
+            </span>
+          ) : (
+            <span className="flex items-center gap-1 px-2.5 py-1 bg-[#17231c] text-[#10b981] text-[10px] font-bold rounded border border-[#10b981]/40">
+              <Swords className="w-3 h-3" />
+              SURVIVAL
+            </span>
+          )}
+
           {roomState.is_private ? (
             <span className="flex items-center gap-1 px-2 py-0.5 bg-[#261518] text-[#ef4444] text-[10px] font-bold rounded border border-[#ef4444]/40">
               <Lock className="w-3 h-3" />
@@ -158,7 +170,15 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
 
       {/* Info Notice */}
       <div className="p-3 bg-[#151924] border border-[#202738] rounded-lg text-[11px] text-[#94a3b8] leading-relaxed">
-        Bagikan link atau kode room ke teman kamu. Semua pemain dalam room akan bertanding serentak selama 2 menit untuk merebut posisi skor tertinggi!
+        {roomState.mode === 'timer' ? (
+          <>
+            Pertandingan <strong>Mode Timer Rush ({roomState.duration_minutes || 2} Menit)</strong>. Semua pemain bertanding serentak. Pemain dengan skor tertinggi saat waktu habis menjadi pemenang!
+          </>
+        ) : (
+          <>
+            Pertandingan <strong>Mode Survival</strong>. Bertahan hidup selama mungkin tanpa kehabisan langkah. Pemain terakhir yang bertahan (Last Man Standing) menjadi pemenang!
+          </>
+        )}
       </div>
 
       {/* Action Button */}

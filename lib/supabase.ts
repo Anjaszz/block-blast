@@ -1,5 +1,5 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
-import { LeaderboardEntry, RoomInfo } from './types';
+import { LeaderboardEntry, RoomInfo, StageMode } from './types';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim();
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim();
@@ -484,20 +484,50 @@ export async function migrateUsernameInLeaderboard(
 // ==========================================
 // ROOM FUNCTIONS (Create, Browse & Delete Rooms)
 // ==========================================
+
+export function parseRoomMeta(rawName: string): { cleanName: string; mode: StageMode; duration_minutes?: number } {
+  let mode: StageMode = 'survival';
+  let duration_minutes: number | undefined = undefined;
+  let cleanName = rawName || '';
+
+  const timerMatch = rawName.match(/\s*\[TIMER:(\d+)\]/i);
+  const survivalMatch = rawName.match(/\s*\[SURVIVAL\]/i);
+
+  if (timerMatch) {
+    mode = 'timer';
+    duration_minutes = parseInt(timerMatch[1], 10) || 2;
+    cleanName = rawName.replace(/\s*\[TIMER:\d+\]/i, '').trim();
+  } else if (survivalMatch) {
+    mode = 'survival';
+    cleanName = rawName.replace(/\s*\[SURVIVAL\]/i, '').trim();
+  }
+
+  return { cleanName: cleanName || rawName, mode, duration_minutes };
+}
+
 export async function createRoomInDb(params: {
   name: string;
   is_private: boolean;
   password?: string;
   host_name: string;
   host_id: string;
+  mode?: StageMode;
+  duration_minutes?: number;
 }): Promise<RoomInfo> {
   const code = generateRoomCode();
+  const baseName = params.name.trim() || `Stage ${code}`;
+  const mode: StageMode = params.mode || 'survival';
+  const duration_minutes = mode === 'timer' ? (params.duration_minutes || 2) : undefined;
+  const encodedName = mode === 'timer' ? `${baseName} [TIMER:${duration_minutes}]` : `${baseName} [SURVIVAL]`;
+
   const roomData: RoomInfo = {
     id: `room-${Date.now()}`,
     code,
-    name: params.name.trim() || `Stage ${code}`,
+    name: baseName,
     is_private: params.is_private,
     password: params.password?.trim() || undefined,
+    mode,
+    duration_minutes,
     player_count: 1,
     max_players: 5,
     status: 'waiting',
@@ -513,7 +543,7 @@ export async function createRoomInDb(params: {
         .insert([
           {
             code: roomData.code,
-            name: roomData.name,
+            name: encodedName,
             is_private: roomData.is_private,
             password: roomData.password,
             status: 'waiting',
@@ -540,7 +570,7 @@ export async function createRoomInDb(params: {
   if (typeof window !== 'undefined') {
     const raw = localStorage.getItem(LOCAL_ROOMS_KEY);
     const rooms: RoomInfo[] = raw ? JSON.parse(raw) : [];
-    rooms.unshift(roomData);
+    rooms.unshift({ ...roomData, name: encodedName });
     localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(rooms));
   }
 
@@ -550,6 +580,16 @@ export async function createRoomInDb(params: {
 export async function fetchRoomsFromDb(searchQuery?: string): Promise<RoomInfo[]> {
   sanitizeLocalCache();
 
+  const now = Date.now();
+  const MAX_ROOM_AGE_MS = 10 * 60 * 1000; // 10 menit maksimal untuk room 'waiting'
+
+  const currentLocalPlayerId = typeof window !== 'undefined'
+    ? localStorage.getItem('blockarena_player_id')
+    : null;
+  const currentActiveRoom = typeof window !== 'undefined'
+    ? sessionStorage.getItem('blockarena_active_room')
+    : null;
+
   if (isSupabaseConfigured && supabase) {
     try {
       let query = supabase
@@ -557,7 +597,7 @@ export async function fetchRoomsFromDb(searchQuery?: string): Promise<RoomInfo[]
         .select('*')
         .eq('status', 'waiting')
         .order('created_at', { ascending: false })
-        .limit(20);
+        .limit(30);
 
       if (searchQuery && searchQuery.trim()) {
         const q = searchQuery.trim();
@@ -566,19 +606,43 @@ export async function fetchRoomsFromDb(searchQuery?: string): Promise<RoomInfo[]
 
       const { data, error } = await query;
       if (!error && data !== null) {
-        return data.map((r) => ({
-          id: r.id,
-          code: r.code,
-          name: r.name,
-          is_private: r.is_private,
-          password: r.password,
-          player_count: 1,
-          max_players: r.max_players || 5,
-          status: r.status,
-          host_name: r.host_name,
-          host_id: r.host_id,
-          created_at: r.created_at,
-        }));
+        const validRooms: RoomInfo[] = [];
+
+        for (const r of data) {
+          const roomAge = now - new Date(r.created_at).getTime();
+
+          // 1. Jika room sudah lebih dari 10 menit dan masih 'waiting', anggap abandoned & hapus
+          if (roomAge > MAX_ROOM_AGE_MS) {
+            deleteRoomFromDb(r.code);
+            continue;
+          }
+
+          // 2. Jika host adalah player ini sendiri, tapi player ini TIDAK sedang berada di room tersebut
+          // (misal baru buka kembali website setelah close tab), otomatis hapus room lama ini!
+          if (currentLocalPlayerId && r.host_id === currentLocalPlayerId && currentActiveRoom !== r.code) {
+            deleteRoomFromDb(r.code);
+            continue;
+          }
+
+          const { cleanName, mode, duration_minutes } = parseRoomMeta(r.name);
+          validRooms.push({
+            id: r.id,
+            code: r.code,
+            name: cleanName,
+            is_private: r.is_private,
+            password: r.password,
+            mode,
+            duration_minutes,
+            player_count: 1,
+            max_players: r.max_players || 5,
+            status: r.status,
+            host_name: r.host_name,
+            host_id: r.host_id,
+            created_at: r.created_at,
+          });
+        }
+
+        return validRooms;
       }
       if (error) {
         console.warn('Supabase rooms query error:', error.message);
@@ -593,13 +657,32 @@ export async function fetchRoomsFromDb(searchQuery?: string): Promise<RoomInfo[]
     const raw = localStorage.getItem(LOCAL_ROOMS_KEY);
     let rooms: RoomInfo[] = raw ? JSON.parse(raw) : [];
 
+    // Filter stale rooms & orphaned rooms
+    rooms = rooms.filter((r) => {
+      const roomAge = now - new Date(r.created_at).getTime();
+      if (roomAge > MAX_ROOM_AGE_MS) return false;
+      if (currentLocalPlayerId && r.host_id === currentLocalPlayerId && currentActiveRoom !== r.code) {
+        return false;
+      }
+      return true;
+    });
+    localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(rooms));
+
     if (searchQuery && searchQuery.trim()) {
       const q = searchQuery.toLowerCase().trim();
       rooms = rooms.filter(
         (r) => r.name.toLowerCase().includes(q) || r.code.toLowerCase().includes(q)
       );
     }
-    return rooms;
+    return rooms.map((r) => {
+      const { cleanName, mode, duration_minutes } = parseRoomMeta(r.name);
+      return {
+        ...r,
+        name: cleanName,
+        mode,
+        duration_minutes,
+      };
+    });
   }
 
   return [];
@@ -618,12 +701,15 @@ export async function getRoomByCode(code: string): Promise<RoomInfo | null> {
         .single();
 
       if (!error && data) {
+        const { cleanName, mode, duration_minutes } = parseRoomMeta(data.name);
         return {
           id: data.id,
           code: data.code,
-          name: data.name,
+          name: cleanName,
           is_private: data.is_private,
           password: data.password,
+          mode,
+          duration_minutes,
           player_count: 1,
           max_players: data.max_players || 5,
           status: data.status,
@@ -641,49 +727,94 @@ export async function getRoomByCode(code: string): Promise<RoomInfo | null> {
   if (typeof window !== 'undefined') {
     const raw = localStorage.getItem(LOCAL_ROOMS_KEY);
     const rooms: RoomInfo[] = raw ? JSON.parse(raw) : [];
-    return rooms.find((r) => r.code.toUpperCase() === cleanCode) || null;
+    const found = rooms.find((r) => r.code.toUpperCase() === cleanCode);
+    if (found) {
+      const { cleanName, mode, duration_minutes } = parseRoomMeta(found.name);
+      return {
+        ...found,
+        name: cleanName,
+        mode,
+        duration_minutes,
+      };
+    }
+    return null;
   }
 
   return null;
 }
 
 /**
- * Hapus / tutup room ketika Room Master keluar atau room kosong
+ * Hapus / tutup room ketika Room Master keluar atau tab ditutup.
+ * Menggunakan direct fetch dengan keepalive: true agar request tetap dikirim
+ * meskipun tab/browser sedang di-close.
  */
 export async function deleteRoomFromDb(code: string): Promise<boolean> {
   const cleanCode = code.toUpperCase().trim();
+  if (!cleanCode) return true;
 
+  // 1. Sinkronisasi seketika di localStorage & sessionStorage
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(LOCAL_ROOMS_KEY);
+      if (raw) {
+        const rooms: RoomInfo[] = JSON.parse(raw);
+        const filtered = rooms.filter((r) => r.code.toUpperCase() !== cleanCode);
+        localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(filtered));
+      }
+      const active = sessionStorage.getItem('blockarena_active_room');
+      if (active === cleanCode) {
+        sessionStorage.removeItem('blockarena_active_room');
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  // 2. Direct HTTP fetch dengan keepalive: true (dijamin dikirim saat browser tab close / beforeunload)
+  if (isSupabaseConfigured && supabaseUrl && supabaseAnonKey) {
+    try {
+      const restEndpoint = `${supabaseUrl}/rest/v1/rooms?code=eq.${encodeURIComponent(cleanCode)}`;
+      fetch(restEndpoint, {
+        method: 'DELETE',
+        keepalive: true,
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+      }).catch(() => {});
+
+      fetch(restEndpoint, {
+        method: 'PATCH',
+        keepalive: true,
+        headers: {
+          apikey: supabaseAnonKey,
+          Authorization: `Bearer ${supabaseAnonKey}`,
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        body: JSON.stringify({ status: 'closed' }),
+      }).catch(() => {});
+    } catch (err) {
+      console.warn('Keepalive delete failed:', err);
+    }
+  }
+
+  // 3. Regular Supabase client delete (untuk leave biasa di dalam aplikasi)
   if (isSupabaseConfigured && supabase) {
     try {
-      // 1. Try to delete row completely
       await supabase
         .from('rooms')
         .delete()
         .eq('code', cleanCode);
 
-      // 2. Also update status to 'closed' in case delete RLS is pending
       await supabase
         .from('rooms')
         .update({ status: 'closed' })
         .eq('code', cleanCode);
-
-      return true;
     } catch (err) {
       console.warn('Failed to delete room from Supabase:', err);
-    }
-  }
-
-  // Remove from localStorage cache
-  if (typeof window !== 'undefined') {
-    const raw = localStorage.getItem(LOCAL_ROOMS_KEY);
-    if (raw) {
-      try {
-        const rooms: RoomInfo[] = JSON.parse(raw);
-        const filtered = rooms.filter((r) => r.code.toUpperCase() !== cleanCode);
-        localStorage.setItem(LOCAL_ROOMS_KEY, JSON.stringify(filtered));
-      } catch {
-        // Ignore
-      }
     }
   }
 
