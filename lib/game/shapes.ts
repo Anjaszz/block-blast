@@ -77,3 +77,52 @@ export function generateRandomShape(): Shape {
 export function generateShapeTrio(): Shape[] {
   return [generateRandomShape(), generateRandomShape(), generateRandomShape()];
 }
+
+// 4 Pilihan Balok Raksasa untuk Gift Attack ke Lawan
+export const ATTACK_GIFT_TEMPLATES: ShapeTemplate[] = [
+  {
+    name: 'GIANT SQUARE (3x3)',
+    matrix: [
+      [1, 1, 1],
+      [1, 1, 1],
+      [1, 1, 1],
+    ],
+    color: '#ef4444', // Danger Crimson
+  },
+  {
+    name: 'MEGA CROSS (3x3)',
+    matrix: [
+      [0, 1, 0],
+      [1, 1, 1],
+      [0, 1, 0],
+    ],
+    color: '#f97316', // Fiery Orange
+  },
+  {
+    name: 'GIANT BAR (5-CELL)',
+    matrix: [[1, 1, 1, 1, 1]],
+    color: '#a855f7', // Neon Purple
+  },
+  {
+    name: 'GIANT CORNER (3x3)',
+    matrix: [
+      [1, 0, 0],
+      [1, 0, 0],
+      [1, 1, 1],
+    ],
+    color: '#ec4899', // Hot Pink
+  },
+];
+
+export function createAttackShape(templateIndex: number, attackerName: string = ''): Shape {
+  const template = ATTACK_GIFT_TEMPLATES[templateIndex] || ATTACK_GIFT_TEMPLATES[0];
+  return {
+    id: `attack-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    matrix: template.matrix,
+    color: template.color,
+    width: template.matrix[0].length,
+    height: template.matrix.length,
+    isAttackGift: true,
+    attackerName,
+  };
+}

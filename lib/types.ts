@@ -8,6 +8,8 @@ export interface Shape {
   color: string; // solid blue or red shades
   width: number;
   height: number;
+  isAttackGift?: boolean;
+  attackerName?: string;
 }
 
 export interface Player {

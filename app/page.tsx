@@ -13,6 +13,10 @@ import { LeaderboardModal } from '@/components/LeaderboardModal';
 import { UsernameModal } from '@/components/UsernameModal';
 import { GameOverModal } from '@/components/GameOverModal';
 import { ConfirmExitModal } from '@/components/ConfirmExitModal';
+import { AttackModal } from '@/components/AttackModal';
+import { DailyCheckinModal } from '@/components/DailyCheckinModal';
+import { UpdatesModal } from '@/components/UpdatesModal';
+import { getUserGems, getCheckinStatus, consumeGem } from '@/lib/gems';
 
 import { Grid, Shape, Player, RoomState, RoomInfo, StageMode } from '@/lib/types';
 import {
@@ -36,7 +40,7 @@ import {
   fetchRoomsFromDb,
   deleteRoomFromDb,
 } from '@/lib/supabase';
-import { Flame, Sparkles, Skull } from 'lucide-react';
+import { Flame, Sparkles, Skull, Swords } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function Home() {
@@ -57,6 +61,13 @@ export default function Home() {
   const [isCreateRoomOpen, setIsCreateRoomOpen] = useState(false);
   const [isBrowseRoomsOpen, setIsBrowseRoomsOpen] = useState(false);
   const [isConfirmExitOpen, setIsConfirmExitOpen] = useState(false);
+  const [isCheckinModalOpen, setIsCheckinModalOpen] = useState(false);
+  const [isUpdatesModalOpen, setIsUpdatesModalOpen] = useState(false);
+
+  // Gems & Revive (Continue) System
+  const [gems, setGems] = useState(0);
+  const [canClaimCheckin, setCanClaimCheckin] = useState(false);
+  const [hasUsedContinue, setHasUsedContinue] = useState(false);
 
   // Game Engine State
   const [grid, setGrid] = useState<Grid>(createEmptyGrid);
@@ -88,6 +99,14 @@ export default function Home() {
   const [stageWinner, setStageWinner] = useState<Player | null>(null);
   const [stageRank, setStageRank] = useState<number | null>(null);
 
+  // Attack Gift System State (Combo >= 3)
+  const [attackCharges, setAttackCharges] = useState(0);
+  const [isAttackModalOpen, setIsAttackModalOpen] = useState(false);
+  const [incomingAttackAlert, setIncomingAttackAlert] = useState<{
+    attackerName: string;
+    shapeName: string;
+  } | null>(null);
+
   // Dragging State
   const [dragState, setDragState] = useState<{
     shape: Shape;
@@ -115,6 +134,15 @@ export default function Home() {
       setHighScore(parseInt(storedBest, 10));
     }
 
+    // Load Gems & Check-in status
+    setGems(getUserGems());
+    try {
+      const checkinInfo = getCheckinStatus();
+      setCanClaimCheckin(checkinInfo.canClaimToday);
+    } catch {
+      // Ignore fallback
+    }
+
     if (!storedName) {
       // First time visitor: show modal input username
       setIsFirstVisit(true);
@@ -122,6 +150,10 @@ export default function Home() {
       storedName = 'Player_1';
     } else {
       setUsername(storedName);
+      // If user already has username, check if they have seen latest updates
+      if (typeof window !== 'undefined' && !localStorage.getItem('blockarena_has_seen_updates_v1')) {
+        setIsUpdatesModalOpen(true);
+      }
     }
 
     // Check URL search params for direct room link: ?join=CODE
@@ -164,11 +196,48 @@ export default function Home() {
     setShapes(generateShapeTrio());
   }, []);
 
-  // Cleanup room when closing tab/browser (beforeunload, pagehide, unload)
+  // Track live score in ref for reliable unload / pagehide access
+  const currentScoreRef = useRef({
+    score: 0,
+    linesCleared: 0,
+    maxCombo: 0,
+    currentView: 'dashboard',
+    username: 'Player',
+    highScore: 0,
+  });
+
+  useEffect(() => {
+    currentScoreRef.current = {
+      score,
+      linesCleared,
+      maxCombo,
+      currentView,
+      username,
+      highScore,
+    };
+  }, [score, linesCleared, maxCombo, currentView, username, highScore]);
+
+  // Cleanup room & auto-save high score when closing tab/browser (beforeunload, pagehide, unload)
   useEffect(() => {
     const handleExit = () => {
+      // 1. Leave stage room if in multiplayer
       if (stageManager) {
         stageManager.leave();
+      }
+
+      // 2. Auto-save Solo best score if current game set a new personal record
+      const { score: s, linesCleared: l, maxCombo: c, currentView: v, username: u, highScore: h } = currentScoreRef.current;
+      if (v === 'solo' && s > 0) {
+        try {
+          const storedBest = parseInt(localStorage.getItem('blockarena_solo_high_score') || '0', 10);
+          const currentBest = Math.max(h, storedBest);
+          if (s > currentBest) {
+            localStorage.setItem('blockarena_solo_high_score', String(s));
+            submitSoloScore(u, s, l, c);
+          }
+        } catch {
+          // Ignore
+        }
       }
     };
     window.addEventListener('beforeunload', handleExit);
@@ -192,6 +261,19 @@ export default function Home() {
     if (oldName && oldName.trim().toLowerCase() !== newName.trim().toLowerCase()) {
       await migrateUsernameInLeaderboard(oldName, newName);
     }
+
+    // Tampilkan modal update setelah selesai set username pertama kali (jika belum pernah lihat)
+    if (typeof window !== 'undefined' && !localStorage.getItem('blockarena_has_seen_updates_v1')) {
+      setIsUpdatesModalOpen(true);
+    }
+  };
+
+  // Acknowledge Updates Note
+  const handleAcknowledgeUpdates = () => {
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('blockarena_has_seen_updates_v1', 'true');
+    }
+    setIsUpdatesModalOpen(false);
   };
 
   // Toggle Sound
@@ -214,7 +296,46 @@ export default function Home() {
     setIsGameOver(false);
     setIsStageEliminated(false);
     setIsNewHigh(false);
+    setAttackCharges(0);
+    setIsAttackModalOpen(false);
+    setIncomingAttackAlert(null);
+    setHasUsedContinue(false);
   }, []);
+
+  // Continue / Revive Game (Hanya di mode Solo & 1x per game seharga 1 Permata)
+  const handleContinueGame = useCallback(() => {
+    if (hasUsedContinue) return;
+    const success = consumeGem(1);
+    if (!success) return;
+
+    setGems(getUserGems());
+    setHasUsedContinue(true);
+
+    // Clears rows 3 & 4 (center rows) to give breathing space for the revived player
+    setGrid((prev) =>
+      prev.map((row, rIdx) =>
+        rIdx === 3 || rIdx === 4 ? row.map(() => null) : [...row]
+      )
+    );
+
+    // Provide 3 fresh guaranteed shapes
+    setShapes(generateShapeTrio());
+    setSelectedShape(null);
+    setHoverPos(null);
+    setIsGameOver(false);
+
+    soundManager.playClear(2);
+    try {
+      confetti({
+        particleCount: 60,
+        spread: 60,
+        origin: { y: 0.5 },
+        colors: ['#38bdf8', '#3b82f6', '#93c5fd', '#ffffff'],
+      });
+    } catch {
+      // Confetti fallback
+    }
+  }, [hasUsedContinue]);
 
   // Check Game Over Condition
   const checkEndGameCondition = useCallback(
@@ -332,6 +453,10 @@ export default function Home() {
 
           try {
             if (newComboVal >= 3) {
+              if (currentView === 'stage_playing') {
+                setAttackCharges((prev) => prev + 1);
+              }
+
               // Double fireworks cannon bursts from left and right
               confetti({
                 particleCount: 50,
@@ -385,6 +510,23 @@ export default function Home() {
 
       const finalLines = linesCleared + totalLines;
       const finalMaxCombo = Math.max(maxCombo, newComboVal);
+
+      // Realtime auto-save high score in Solo mode whenever a new record is reached
+      if (currentView === 'solo') {
+        const storedBest = typeof window !== 'undefined'
+          ? parseInt(localStorage.getItem('blockarena_solo_high_score') || '0', 10)
+          : 0;
+        const currentBest = Math.max(highScore, storedBest);
+
+        if (finalScore > currentBest) {
+          setHighScore(finalScore);
+          setIsNewHigh(true);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('blockarena_solo_high_score', String(finalScore));
+          }
+          submitSoloScore(username, finalScore, finalLines, finalMaxCombo);
+        }
+      }
 
       setTimeout(() => {
         checkEndGameCondition(finalGrid, updatedShapes, finalScore, finalLines, finalMaxCombo);
@@ -528,6 +670,28 @@ export default function Home() {
         setRoomState(null);
         setCurrentView('dashboard');
       },
+      onIncomingAttack: (attackerName, shape) => {
+        soundManager.playAttackWarning();
+        const shapeLabel = shape.matrix.length >= 3 && shape.matrix[0].length >= 3 ? 'Balok 3x3' : 'Balok Rintangan';
+        setIncomingAttackAlert({
+          attackerName,
+          shapeName: shapeLabel,
+        });
+        setTimeout(() => {
+          setIncomingAttackAlert(null);
+        }, 4000);
+
+        setShapes((prev) => {
+          const next = [...prev];
+          const availableIdx = next.findIndex((s) => s !== null);
+          if (availableIdx >= 0) {
+            next[availableIdx] = shape;
+          } else {
+            next[0] = shape;
+          }
+          return next;
+        });
+      },
     });
 
     if (typeof window !== 'undefined') {
@@ -624,6 +788,22 @@ export default function Home() {
     if (typeof window !== 'undefined') {
       sessionStorage.removeItem('blockarena_active_room');
     }
+
+    // Auto-save Solo score if current run set a new record
+    if (currentView === 'solo' && score > 0) {
+      const storedBest = typeof window !== 'undefined'
+        ? parseInt(localStorage.getItem('blockarena_solo_high_score') || '0', 10)
+        : 0;
+      const currentBest = Math.max(highScore, storedBest);
+      if (score > currentBest) {
+        setHighScore(score);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('blockarena_solo_high_score', String(score));
+        }
+        submitSoloScore(username, score, linesCleared, maxCombo);
+      }
+    }
+
     if (stageManager) {
       stageManager.leave();
       setStageManager(null);
@@ -645,6 +825,9 @@ export default function Home() {
         soundEnabled={soundEnabled}
         onToggleSound={handleToggleSound}
         highScore={highScore}
+        gems={gems}
+        canClaimCheckin={canClaimCheckin}
+        onOpenCheckinModal={() => setIsCheckinModalOpen(true)}
       />
 
       {/* Main Screen Layout based on currentView */}
@@ -661,6 +844,10 @@ export default function Home() {
             onCreateRoom={() => setIsCreateRoomOpen(true)}
             onBrowseRooms={() => setIsBrowseRoomsOpen(true)}
             onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
+            gems={gems}
+            canClaimCheckin={canClaimCheckin}
+            onOpenCheckinModal={() => setIsCheckinModalOpen(true)}
+            onOpenUpdatesModal={() => setIsUpdatesModalOpen(true)}
           />
         )}
 
@@ -759,6 +946,37 @@ export default function Home() {
                   </div>
                 )}
               </div>
+
+              {/* Incoming Attack Alert Banner */}
+              {incomingAttackAlert && (
+                <div className="w-full max-w-[420px] mx-auto mt-2 px-3 py-2 bg-[#2d1115] border border-[#ef4444] rounded-xl flex items-center justify-between gap-2 animate-bounce">
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="w-2.5 h-2.5 rounded-full bg-[#ef4444] animate-ping shrink-0" />
+                    <span className="text-xs font-mono font-bold text-white truncate">
+                      ⚠️ Diserang <span className="text-[#f87171]">{incomingAttackAlert.attackerName}</span>! ({incomingAttackAlert.shapeName})
+                    </span>
+                  </div>
+                  <span className="text-[10px] font-mono text-[#fca5a5] uppercase shrink-0 bg-[#ef4444]/20 px-1.5 py-0.5 rounded">
+                    GIFT MASUK
+                  </span>
+                </div>
+              )}
+
+              {/* Attack Ready Button (When combo >= 3 was achieved in multiplayer) */}
+              {currentView === 'stage_playing' && attackCharges > 0 && !isGameOver && !isStageEliminated && (
+                <button
+                  onClick={() => setIsAttackModalOpen(true)}
+                  className="w-full max-w-[420px] mx-auto mt-2.5 py-2 px-3.5 bg-[#dc2626] hover:bg-[#ef4444] border-2 border-white/80 text-white font-mono font-black text-xs uppercase tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-between shadow-[0_0_25px_rgba(239,68,68,0.6)] animate-pulse"
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Swords className="w-4 h-4 fill-current animate-bounce" />
+                    <span>SERANG LAWAN! ({attackCharges}x KESEMPATAN)</span>
+                  </span>
+                  <span className="px-2 py-0.5 bg-black/40 rounded text-[10px] tracking-widest font-black">
+                    PILIH GIFT ➔
+                  </span>
+                </button>
+              )}
 
               {/* Bottom Shapes Dock */}
               <ShapeDock
@@ -868,16 +1086,21 @@ export default function Home() {
         linesCleared={linesCleared}
         maxCombo={maxCombo}
         isNewHigh={isNewHigh}
-        gameMode={currentView === 'stage_playing' ? 'stage' : 'solo'}
+        gameMode={currentView === 'stage_playing' || stageManager !== null || roomState !== null || stageWinner !== null ? 'stage' : 'solo'}
         stageMode={roomState?.mode || 'survival'}
         stageWinner={stageWinner}
         stageRank={stageRank}
         localPlayerId={playerId}
+        gems={gems}
+        hasUsedContinue={hasUsedContinue}
+        onContinue={handleContinueGame}
         onRestart={() => {
-          if (currentView === 'stage_playing') {
+          if (currentView === 'stage_playing' || stageManager !== null) {
             if (stageManager) stageManager.leave();
             setStageManager(null);
             setRoomState(null);
+            setStageWinner(null);
+            setStageRank(null);
             setCurrentView('dashboard');
           } else {
             handleRestartBoard();
@@ -885,6 +1108,8 @@ export default function Home() {
         }}
         onBackToMenu={() => {
           setIsGameOver(false);
+          setStageWinner(null);
+          setStageRank(null);
           if (stageManager) stageManager.leave();
           setStageManager(null);
           setRoomState(null);
@@ -897,6 +1122,48 @@ export default function Home() {
         isOpen={isConfirmExitOpen}
         onCancel={() => setIsConfirmExitOpen(false)}
         onConfirm={handleConfirmExit}
+      />
+
+      {/* MODAL 7: COMBO ATTACK SELECTION */}
+      <AttackModal
+        isOpen={isAttackModalOpen}
+        onClose={() => setIsAttackModalOpen(false)}
+        rivals={roomState ? roomState.players.filter((p) => p.id !== playerId && p.isAlive) : []}
+        onSendAttack={(targetPlayerId, shape) => {
+          if (stageManager) {
+            stageManager.sendAttack(targetPlayerId, shape);
+            soundManager.playAttackSent();
+            setAttackCharges((prev) => Math.max(0, prev - 1));
+          }
+        }}
+      />
+
+      {/* MODAL 8: DAILY CHECK-IN REWARDS */}
+      <DailyCheckinModal
+        isOpen={isCheckinModalOpen}
+        onClose={() => {
+          setIsCheckinModalOpen(false);
+          try {
+            setCanClaimCheckin(getCheckinStatus().canClaimToday);
+          } catch {
+            // fallback
+          }
+        }}
+        onGemsUpdated={(newGems) => {
+          setGems(newGems);
+          try {
+            setCanClaimCheckin(getCheckinStatus().canClaimToday);
+          } catch {
+            // fallback
+          }
+        }}
+      />
+
+      {/* MODAL 9: WHAT'S NEW (CATATAN UPDATE) */}
+      <UpdatesModal
+        isOpen={isUpdatesModalOpen}
+        onClose={() => setIsUpdatesModalOpen(false)}
+        onAcknowledge={handleAcknowledgeUpdates}
       />
     </div>
   );

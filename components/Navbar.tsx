@@ -13,6 +13,9 @@ interface NavbarProps {
   soundEnabled: boolean;
   onToggleSound: () => void;
   highScore: number;
+  gems?: number;
+  canClaimCheckin?: boolean;
+  onOpenCheckinModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -24,6 +27,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   soundEnabled,
   onToggleSound,
   highScore,
+  gems = 0,
+  canClaimCheckin = false,
+  onOpenCheckinModal,
 }) => {
   return (
     <header className="w-full bg-[#10131c] border-b border-[#202636] px-4 py-3 sticky top-0 z-30">
@@ -61,7 +67,24 @@ export const Navbar: React.FC<NavbarProps> = ({
 
         {/* Controls & Profile */}
         <div className="flex items-center gap-2">
-
+          {/* Gems & Daily Check-in Button */}
+          {onOpenCheckinModal && (
+            <button
+              onClick={onOpenCheckinModal}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-mono font-bold transition-all cursor-pointer border ${
+                canClaimCheckin
+                  ? 'bg-[#132238] border-[#38bdf8] text-white shadow-[0_0_15px_rgba(56,189,248,0.35)] animate-pulse'
+                  : 'bg-[#181c28] border-[#262e3f] text-[#94a3b8] hover:text-white hover:border-[#38bdf8]'
+              }`}
+              title="Daily Check-in & Saldo Permata Revive"
+            >
+              <span className="text-xs">💎</span>
+              <span className="font-mono font-black text-white">{gems}</span>
+              {canClaimCheckin && (
+                <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-ping" />
+              )}
+            </button>
+          )}
 
           {/* Username Badge */}
           <button

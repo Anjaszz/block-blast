@@ -1,5 +1,5 @@
 import { RealtimeChannel } from '@supabase/supabase-js';
-import { Player, RoomState, StageMode } from './types';
+import { Player, RoomState, StageMode, Shape } from './types';
 import { supabase, isSupabaseConfigured, generateRoomCode, deleteRoomFromDb } from './supabase';
 export { generateRoomCode };
 
@@ -20,6 +20,7 @@ export interface MultiplayerCallbacks {
   onGameStart: () => void;
   onGameOver: (winner: Player | null, rankedPlayers?: Player[]) => void;
   onRoomClosed?: (message: string) => void;
+  onIncomingAttack?: (attackerName: string, shape: Shape) => void;
 }
 
 // Helper to rank players:
@@ -188,6 +189,13 @@ export class StageManager {
       this.finishGame(payload?.winner || null, payload?.ranked || undefined);
     });
 
+    // Handle attack block broadcast from a rival
+    this.channel.on('broadcast', { event: 'player_attack' }, ({ payload }) => {
+      if (payload?.targetId === this.localPlayer.id && payload?.shape) {
+        this.callbacks.onIncomingAttack?.(payload.attackerName || 'Rival', payload.shape);
+      }
+    });
+
     this.channel.subscribe(async (status) => {
       if (status === 'SUBSCRIBED') {
         await this.channel?.track({
@@ -325,6 +333,41 @@ export class StageManager {
 
   public forceFinishAsWinner() {
     this.finishGame(this.localPlayer);
+  }
+
+  // Send selected gift obstacle block to target player
+  public sendAttack(targetPlayerId: string, shape: Shape) {
+    if (this.isBotMode) {
+      // In bot mode, attacking bots slows their score gain
+      this.state.players = this.state.players.map((p) => {
+        if (p.id === targetPlayerId) {
+          return {
+            ...p,
+            combo: 0,
+            score: Math.max(0, p.score - 50),
+          };
+        }
+        return p;
+      });
+      this.callbacks.onRoomStateChange({ ...this.state });
+      return;
+    }
+
+    if (this.channel) {
+      this.channel.send({
+        type: 'broadcast',
+        event: 'player_attack',
+        payload: {
+          targetId: targetPlayerId,
+          attackerName: this.localPlayer.username,
+          shape: {
+            ...shape,
+            isAttackGift: true,
+            attackerName: this.localPlayer.username,
+          },
+        },
+      });
+    }
   }
 
   public triggerStart() {
