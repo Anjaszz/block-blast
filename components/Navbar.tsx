@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { Trophy, Volume2, VolumeX, User, ArrowLeft } from 'lucide-react';
+import { Trophy, Volume2, VolumeX, User, ArrowLeft, ShoppingBag } from 'lucide-react';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
 interface NavbarProps {
@@ -16,6 +16,7 @@ interface NavbarProps {
   gems?: number;
   canClaimCheckin?: boolean;
   onOpenCheckinModal?: () => void;
+  onOpenShopModal?: () => void;
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -30,6 +31,7 @@ export const Navbar: React.FC<NavbarProps> = ({
   gems = 0,
   canClaimCheckin = false,
   onOpenCheckinModal,
+  onOpenShopModal,
 }) => {
   return (
     <header className="w-full bg-[#10131c] border-b border-[#202636] px-4 py-3 sticky top-0 z-30">
@@ -76,13 +78,25 @@ export const Navbar: React.FC<NavbarProps> = ({
                   ? 'bg-[#132238] border-[#38bdf8] text-white shadow-[0_0_15px_rgba(56,189,248,0.35)] animate-pulse'
                   : 'bg-[#181c28] border-[#262e3f] text-[#94a3b8] hover:text-white hover:border-[#38bdf8]'
               }`}
-              title="Daily Check-in & Saldo Permata Revive"
+              title="Daily Check-in & Saldo Permata"
             >
               <span className="text-xs">💎</span>
               <span className="font-mono font-black text-white">{gems}</span>
               {canClaimCheckin && (
                 <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-ping" />
               )}
+            </button>
+          )}
+
+          {/* Shop Modal Button */}
+          {onOpenShopModal && (
+            <button
+              onClick={onOpenShopModal}
+              className="flex items-center gap-1 px-2.5 py-1.5 bg-[#181c28] hover:bg-[#1e273a] border border-[#262e3f] hover:border-[#38bdf8] text-[#38bdf8] hover:text-white rounded text-xs font-mono font-bold transition-all cursor-pointer"
+              title="Toko Permata & Alat Bantu (Power-Ups)"
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">Toko</span>
             </button>
           )}
 

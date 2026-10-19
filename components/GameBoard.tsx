@@ -1,9 +1,7 @@
-'use client';
-
 import React from 'react';
 import { Grid, Shape } from '@/lib/types';
 import { canPlaceShape, checkCompletedLines, BOARD_SIZE } from '@/lib/game/engine';
-import { X as XIcon, Zap } from 'lucide-react';
+import { X as XIcon, Zap, Hammer, Bomb } from 'lucide-react';
 
 interface GameBoardProps {
   grid: Grid;
@@ -13,6 +11,7 @@ interface GameBoardProps {
   onCellHover: (row: number, col: number) => void;
   clearingCells: Set<string>; // 'r,c'
   combo: number;
+  toolMode?: 'hammer' | 'bomb' | null;
 }
 
 interface CellPreview {
@@ -28,41 +27,43 @@ export const GameBoard: React.FC<GameBoardProps> = ({
   onCellHover,
   clearingCells,
   combo,
+  toolMode = null,
 }) => {
   // 1. Compute preview cells with high-visibility conflict detection
   const previewCells = React.useMemo(() => {
     const previewMap = new Map<string, CellPreview>();
 
-    if (activeShape && hoverPos) {
-      const isValid = canPlaceShape(grid, activeShape, hoverPos.row, hoverPos.col);
+    // Suppress shape placement previews completely while any tool is active
+    if (toolMode || !activeShape || !hoverPos) return previewMap;
 
-      for (let r = 0; r < activeShape.height; r++) {
-        for (let c = 0; c < activeShape.width; c++) {
-          if (activeShape.matrix[r][c] === 1) {
-            const boardR = hoverPos.row + r;
-            const boardC = hoverPos.col + c;
+    const isValid = canPlaceShape(grid, activeShape, hoverPos.row, hoverPos.col);
 
-            if (boardR >= 0 && boardR < BOARD_SIZE && boardC >= 0 && boardC < BOARD_SIZE) {
-              const isOccupied = grid[boardR][boardC] !== null;
+    for (let r = 0; r < activeShape.height; r++) {
+      for (let c = 0; c < activeShape.width; c++) {
+        if (activeShape.matrix[r][c] === 1) {
+          const boardR = hoverPos.row + r;
+          const boardC = hoverPos.col + c;
 
-              if (isValid) {
-                previewMap.set(`${boardR},${boardC}`, {
-                  status: 'valid',
-                  color: activeShape.color,
-                });
-              } else if (isOccupied) {
-                // Direct overlap collision with existing block
-                previewMap.set(`${boardR},${boardC}`, {
-                  status: 'overlap',
-                  color: '#dc2626',
-                });
-              } else {
-                // Empty cell on board but shape as a whole doesn't fit
-                previewMap.set(`${boardR},${boardC}`, {
-                  status: 'invalid_empty',
-                  color: '#991b1b',
-                });
-              }
+          if (boardR >= 0 && boardR < BOARD_SIZE && boardC >= 0 && boardC < BOARD_SIZE) {
+            const isOccupied = grid[boardR][boardC] !== null;
+
+            if (isValid) {
+              previewMap.set(`${boardR},${boardC}`, {
+                status: 'valid',
+                color: activeShape.color,
+              });
+            } else if (isOccupied) {
+              // Direct overlap collision with existing block
+              previewMap.set(`${boardR},${boardC}`, {
+                status: 'overlap',
+                color: '#dc2626',
+              });
+            } else {
+              // Empty cell on board but shape as a whole doesn't fit
+              previewMap.set(`${boardR},${boardC}`, {
+                status: 'invalid_empty',
+                color: '#991b1b',
+              });
             }
           }
         }
@@ -70,12 +71,12 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     }
 
     return previewMap;
-  }, [activeShape, hoverPos, grid]);
+  }, [activeShape, hoverPos, grid, toolMode]);
 
   // 2. Pre-calculate which lines will be BLASTED if placed at hoverPos
   const willBlastCellKeys = React.useMemo(() => {
     const blastSet = new Set<string>();
-    if (!activeShape || !hoverPos) return blastSet;
+    if (toolMode || !activeShape || !hoverPos) return blastSet;
     if (!canPlaceShape(grid, activeShape, hoverPos.row, hoverPos.col)) return blastSet;
 
     // Simulate placing the shape on a temporary board
@@ -102,7 +103,7 @@ export const GameBoard: React.FC<GameBoardProps> = ({
     }
 
     return blastSet;
-  }, [activeShape, hoverPos, grid]);
+  }, [activeShape, hoverPos, grid, toolMode]);
 
   const hasWillBlastLines = willBlastCellKeys.size > 0;
 
@@ -170,8 +171,36 @@ export const GameBoard: React.FC<GameBoardProps> = ({
               }
             }
 
+            // Tool Mode Visuals (Hammer & Bomb Plus +)
+            const isHammerTarget = toolMode === 'hammer' && hoverPos && hoverPos.row === r && hoverPos.col === c;
+            const isBombCenter = toolMode === 'bomb' && hoverPos && hoverPos.row === r && hoverPos.col === c;
+            const isBombTarget =
+              toolMode === 'bomb' &&
+              hoverPos &&
+              ((r === hoverPos.row && Math.abs(c - hoverPos.col) <= 2) ||
+               (c === hoverPos.col && Math.abs(r - hoverPos.row) <= 2));
+
+            if (isHammerTarget) {
+              if (cellColor) {
+                cellBorder = 'border-2 border-orange-400 ring-2 ring-orange-500/80 animate-pulse';
+                cellClasses += ' scale-95';
+              } else {
+                cellBorder = 'border border-orange-500/50';
+              }
+            } else if (isBombTarget) {
+              cellBorder = isBombCenter
+                ? 'border-2 border-white ring-2 ring-red-500 shadow-[0_0_15px_rgba(239,68,68,0.8)]'
+                : 'border-2 border-red-500 ring-1 ring-red-400/60 shadow-[0_0_8px_rgba(239,68,68,0.4)]';
+              if (cellColor) {
+                cellBg = isBombCenter ? '#dc2626' : '#ef4444';
+              } else {
+                cellBg = isBombCenter ? '#7f1d1d' : '#450a0a';
+              }
+              cellClasses += ' scale-95';
+            }
+
             // Line blast preview shimmer
-            if (isWillBlast && !showOverlapIcon) {
+            if (isWillBlast && !showOverlapIcon && !toolMode) {
               cellClasses += ' will-blast-cell';
             }
 
@@ -185,7 +214,9 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                 onClick={() => onCellClick(r, c)}
                 onMouseEnter={() => onCellHover(r, c)}
                 style={{ backgroundColor: isClearing ? '#ffffff' : cellBg }}
-                className={`relative rounded-md flex items-center justify-center cursor-pointer select-none overflow-hidden ${cellBorder} ${cellClasses}`}
+                className={`relative rounded-md flex items-center justify-center cursor-pointer select-none overflow-hidden ${cellBorder} ${cellClasses} ${
+                  toolMode ? 'cursor-crosshair' : ''
+                }`}
               >
                 {/* Visual conflict indicator when overlapping / invalid */}
                 {showOverlapIcon && (
@@ -194,15 +225,36 @@ export const GameBoard: React.FC<GameBoardProps> = ({
                   </div>
                 )}
 
+                {/* Hammer target icon */}
+                {isHammerTarget && (
+                  <div className="absolute inset-0 bg-orange-600/70 flex items-center justify-center z-15 pointer-events-none animate-bounce">
+                    <Hammer className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current" />
+                  </div>
+                )}
+
+                {/* Bomb center icon */}
+                {isBombCenter && (
+                  <div className="absolute inset-0 bg-red-600/90 flex items-center justify-center z-15 pointer-events-none animate-pulse">
+                    <Bomb className="w-4 h-4 sm:w-5 sm:h-5 text-white fill-current animate-bounce" />
+                  </div>
+                )}
+
+                {/* Bomb cross arm indicators */}
+                {isBombTarget && !isBombCenter && (
+                  <div className="absolute inset-0 bg-red-500/25 pointer-events-none flex items-center justify-center z-10">
+                    <div className="w-1.5 h-1.5 rounded-full bg-white shadow-[0_0_6px_#ef4444] animate-ping" />
+                  </div>
+                )}
+
                 {/* Shimmer pulse glow for cells that WILL clear */}
-                {isWillBlast && !showOverlapIcon && !isClearing && (
+                {isWillBlast && !showOverlapIcon && !isClearing && !toolMode && (
                   <div className="absolute inset-0 bg-white/25 pointer-events-none flex items-center justify-center">
                     <div className="w-2 h-2 rounded-full bg-white shadow-[0_0_8px_#ffffff] animate-ping" />
                   </div>
                 )}
 
                 {/* Subtle tactile inner bevel highlight for filled blocks */}
-                {cellColor && !isClearing && !showOverlapIcon && (
+                {cellColor && !isClearing && !showOverlapIcon && !isBombTarget && !isHammerTarget && (
                   <div className="absolute inset-0.5 rounded-[3px] border-t border-l border-white/30 pointer-events-none" />
                 )}
               </div>

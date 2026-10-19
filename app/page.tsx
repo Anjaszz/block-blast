@@ -16,6 +16,8 @@ import { ConfirmExitModal } from '@/components/ConfirmExitModal';
 import { AttackModal } from '@/components/AttackModal';
 import { DailyCheckinModal } from '@/components/DailyCheckinModal';
 import { UpdatesModal } from '@/components/UpdatesModal';
+import { ShopModal } from '@/components/ShopModal';
+import { PowerUpBar, PowerUpTool } from '@/components/PowerUpBar';
 import { getUserGems, getCheckinStatus, consumeGem } from '@/lib/gems';
 
 import { Grid, Shape, Player, RoomState, RoomInfo, StageMode } from '@/lib/types';
@@ -29,7 +31,7 @@ import {
   hasAnyValidMove,
   BOARD_SIZE,
 } from '@/lib/game/engine';
-import { generateShapeTrio } from '@/lib/game/shapes';
+import { generateShapeTrio, rotateShape } from '@/lib/game/shapes';
 import { soundManager } from '@/lib/sound';
 import { StageManager } from '@/lib/multiplayer';
 import {
@@ -63,11 +65,13 @@ export default function Home() {
   const [isConfirmExitOpen, setIsConfirmExitOpen] = useState(false);
   const [isCheckinModalOpen, setIsCheckinModalOpen] = useState(false);
   const [isUpdatesModalOpen, setIsUpdatesModalOpen] = useState(false);
+  const [isShopModalOpen, setIsShopModalOpen] = useState(false);
 
-  // Gems & Revive (Continue) System
+  // Gems & Power-Ups (Alat Bantu) System
   const [gems, setGems] = useState(0);
   const [canClaimCheckin, setCanClaimCheckin] = useState(false);
   const [hasUsedContinue, setHasUsedContinue] = useState(false);
+  const [activeTool, setActiveTool] = useState<PowerUpTool>(null);
 
   // Game Engine State
   const [grid, setGrid] = useState<Grid>(createEmptyGrid);
@@ -300,7 +304,43 @@ export default function Home() {
     setIsAttackModalOpen(false);
     setIncomingAttackAlert(null);
     setHasUsedContinue(false);
+    setActiveTool(null);
   }, []);
+
+  // Power-Up: Rotate a specific Shape (1 Gem)
+  const handleRotateTargetShape = useCallback(
+    (targetShape: Shape) => {
+      if (currentView !== 'solo' || isGameOver) return;
+      const targetIdx = shapes.findIndex((s) => s && s.id === targetShape.id);
+      if (targetIdx === -1 || !shapes[targetIdx]) return;
+
+      const success = consumeGem(1);
+      if (!success) return;
+
+      setGems(getUserGems());
+      soundManager.playRotate();
+
+      const rotated = rotateShape(shapes[targetIdx]!);
+      const nextShapes = [...shapes];
+      nextShapes[targetIdx] = rotated;
+      setShapes(nextShapes);
+      setSelectedShape(rotated);
+      setActiveTool(null);
+    },
+    [currentView, isGameOver, shapes]
+  );
+
+  // Power-Up: Rotate button from PowerUpBar (Toggle Rotate Mode to pick target shape)
+  const handleRotateCurrentShape = useCallback(() => {
+    if (currentView !== 'solo' || isGameOver) return;
+    const activeShapes = shapes.filter((s): s is Shape => s !== null);
+    if (activeShapes.length === 0) return;
+
+    setSelectedShape(null);
+    setHoverPos(null);
+    // Aktifkan mode putar sehingga user bisa memilih balok mana yang ingin diputar
+    setActiveTool((prev) => (prev === 'rotate' ? null : 'rotate'));
+  }, [currentView, isGameOver, shapes]);
 
   // Continue / Revive Game (Hanya di mode Solo & 1x per game seharga 1 Permata)
   const handleContinueGame = useCallback(() => {
@@ -537,9 +577,123 @@ export default function Home() {
     [grid, shapes, score, combo, linesCleared, currentView, stageManager, checkEndGameCondition]
   );
 
-  // Cell Click (click to place)
+  // Cell Click (click to place or use active power-up tool)
   const handleCellClick = (row: number, col: number) => {
     if (isGameOver || isStageEliminated) return;
+
+    // Power-Up Tool: Hammer (Hancurkan 1 Balok Terisi) - Biaya 2 Permata
+    if (activeTool === 'hammer' && currentView === 'solo') {
+      if (grid[row][col] === null) return; // Hanya sel terisi yang bisa dipalu
+      const success = consumeGem(2);
+      if (!success) {
+        setActiveTool(null);
+        setSelectedShape(null);
+        setHoverPos(null);
+        return;
+      }
+
+      setGems(getUserGems());
+      soundManager.playHammer();
+
+      // Flash cell clearing animation
+      setClearingCells(new Set([`${row},${col}`]));
+      setTimeout(() => {
+        setClearingCells(new Set());
+      }, 250);
+
+      const nextGrid = grid.map((r, rIdx) =>
+        r.map((c, cIdx) => (rIdx === row && cIdx === col ? null : c))
+      );
+      setGrid(nextGrid);
+      const nextScore = score + 10;
+      setScore(nextScore);
+      setActiveTool(null);
+      setSelectedShape(null);
+      setHoverPos(null);
+
+      // Save best score if exceeded
+      if (nextScore > highScore) {
+        setHighScore(nextScore);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('blockarena_solo_high_score', String(nextScore));
+        }
+      }
+
+      return;
+    }
+
+    // Power-Up Tool: Bomb Plus (+) - Ledakkan Area Silang Plus (+) - Biaya 3 Permata
+    if (activeTool === 'bomb' && currentView === 'solo') {
+      const success = consumeGem(3);
+      if (!success) {
+        setActiveTool(null);
+        setSelectedShape(null);
+        setHoverPos(null);
+        return;
+      }
+
+      setGems(getUserGems());
+      soundManager.playBomb();
+
+      let destroyedCount = 0;
+      const blastedKeys = new Set<string>();
+
+      const nextGrid = grid.map((r, rIdx) =>
+        r.map((c, cIdx) => {
+          // Pola silang Plus (+): 4 sel horizontal (2 kiri, 2 kanan) dan 4 sel vertikal (2 atas, 2 bawah) dari titik bom
+          const isPlusTarget =
+            (rIdx === row && Math.abs(cIdx - col) <= 2) ||
+            (cIdx === col && Math.abs(rIdx - row) <= 2);
+
+          if (isPlusTarget) {
+            if (c !== null) {
+              destroyedCount++;
+              blastedKeys.add(`${rIdx},${cIdx}`);
+            }
+            return null;
+          }
+          return c;
+        })
+      );
+
+      // Flash explosion effect for all blasted blocks
+      if (blastedKeys.size > 0) {
+        setClearingCells(blastedKeys);
+        setTimeout(() => {
+          setClearingCells(new Set());
+        }, 250);
+      }
+
+      setGrid(nextGrid);
+      const gained = destroyedCount * 10 + 25;
+      const nextScore = score + gained;
+      setScore(nextScore);
+      setActiveTool(null);
+      setSelectedShape(null);
+      setHoverPos(null);
+
+      try {
+        confetti({
+          particleCount: 50,
+          spread: 60,
+          origin: { y: 0.5 },
+          colors: ['#ef4444', '#f97316', '#facc15', '#ffffff'],
+        });
+      } catch {
+        // Confetti fallback
+      }
+
+      if (nextScore > highScore) {
+        setHighScore(nextScore);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('blockarena_solo_high_score', String(nextScore));
+        }
+      }
+
+      return;
+    }
+
+    // Normal placement
     if (!selectedShape) return;
     handleExecutePlacement(selectedShape, row, col);
   };
@@ -553,9 +707,9 @@ export default function Home() {
     }
   };
 
-  // Start Dragging
+  // Start Dragging (Blocked when any power-up tool is active)
   const handleStartDrag = (shape: Shape, e: React.PointerEvent) => {
-    if (isGameOver || isStageEliminated) return;
+    if (isGameOver || isStageEliminated || activeTool !== null) return;
     soundManager.playPickup();
     setSelectedShape(shape);
     setDragState({
@@ -828,6 +982,7 @@ export default function Home() {
         gems={gems}
         canClaimCheckin={canClaimCheckin}
         onOpenCheckinModal={() => setIsCheckinModalOpen(true)}
+        onOpenShopModal={() => setIsShopModalOpen(true)}
       />
 
       {/* Main Screen Layout based on currentView */}
@@ -848,6 +1003,7 @@ export default function Home() {
             canClaimCheckin={canClaimCheckin}
             onOpenCheckinModal={() => setIsCheckinModalOpen(true)}
             onOpenUpdatesModal={() => setIsUpdatesModalOpen(true)}
+            onOpenShopModal={() => setIsShopModalOpen(true)}
           />
         )}
 
@@ -898,12 +1054,13 @@ export default function Home() {
               <div ref={boardRef} className={`relative ${isShakingBoard ? 'shake-board' : ''}`}>
                 <GameBoard
                   grid={grid}
-                  activeShape={dragState ? dragState.shape : selectedShape}
+                  activeShape={activeTool ? null : (dragState ? dragState.shape : selectedShape)}
                   hoverPos={hoverPos}
                   onCellClick={handleCellClick}
                   onCellHover={handleCellHover}
                   clearingCells={clearingCells}
                   combo={combo}
+                  toolMode={currentView === 'solo' && (activeTool === 'hammer' || activeTool === 'bomb') ? activeTool : null}
                 />
 
                 {/* Spectating Overlay saat tereliminasi di Stage Mode (menunggu permainan pemain lain selesai) */}
@@ -978,16 +1135,43 @@ export default function Home() {
                 </button>
               )}
 
+              {/* Solo Mode Power-Ups Toolbar (Rotate, Hammer, Bomb, Shop) */}
+              {currentView === 'solo' && !isGameOver && (
+                <PowerUpBar
+                  gems={gems}
+                  activeTool={activeTool}
+                  onSelectTool={(tool) => {
+                    setSelectedShape(null);
+                    setHoverPos(null);
+                    setActiveTool(tool);
+                  }}
+                  onRotateShape={() => {
+                    setSelectedShape(null);
+                    setHoverPos(null);
+                    handleRotateCurrentShape();
+                  }}
+                  onOpenShop={() => setIsShopModalOpen(true)}
+                  hasPlayableShapes={shapes.some((s) => s !== null)}
+                />
+              )}
+
               {/* Bottom Shapes Dock */}
               <ShapeDock
                 shapes={shapes}
-                selectedShapeId={selectedShape?.id || null}
+                selectedShapeId={activeTool ? null : (selectedShape?.id || null)}
                 onSelectShape={(shape) => {
                   if (isGameOver || isStageEliminated) return;
+                  if (activeTool === 'rotate' && currentView === 'solo') {
+                    handleRotateTargetShape(shape);
+                    return;
+                  }
+                  if (activeTool !== null) return;
                   soundManager.playPickup();
                   setSelectedShape((prev) => (prev?.id === shape.id ? null : shape));
                 }}
                 onStartDrag={handleStartDrag}
+                isRotateMode={activeTool === 'rotate'}
+                isToolActive={activeTool !== null}
               />
 
               <div className="text-[11px] font-mono text-[#64748b] text-center mt-3">
@@ -1164,6 +1348,14 @@ export default function Home() {
         isOpen={isUpdatesModalOpen}
         onClose={() => setIsUpdatesModalOpen(false)}
         onAcknowledge={handleAcknowledgeUpdates}
+      />
+
+      {/* MODAL 10: TOKO PERMATA & ALAT BANTU (POWER-UPS) */}
+      <ShopModal
+        isOpen={isShopModalOpen}
+        onClose={() => setIsShopModalOpen(false)}
+        gems={gems}
+        onOpenCheckin={() => setIsCheckinModalOpen(true)}
       />
     </div>
   );

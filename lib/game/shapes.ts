@@ -126,3 +126,26 @@ export function createAttackShape(templateIndex: number, attackerName: string = 
     attackerName,
   };
 }
+
+/**
+ * Rotate a Shape 90 degrees clockwise
+ */
+export function rotateShape(shape: Shape): Shape {
+  const oldMatrix = shape.matrix;
+  const rows = oldMatrix.length;
+  const cols = oldMatrix[0].length;
+
+  const newMatrix: number[][] = Array.from({ length: cols }, () => Array(rows).fill(0));
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      newMatrix[c][rows - 1 - r] = oldMatrix[r][c];
+    }
+  }
+
+  return {
+    ...shape,
+    matrix: newMatrix,
+    width: newMatrix[0].length,
+    height: newMatrix.length,
+  };
+}

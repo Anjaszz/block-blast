@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Play, Plus, Search, Trophy, User, Volume2, VolumeX, Swords, Crown, Sparkles, Download, Smartphone, X } from 'lucide-react';
+import { Play, Plus, Search, Trophy, User, Volume2, VolumeX, Swords, Crown, Sparkles, Download, Smartphone, X, ShoppingBag } from 'lucide-react';
 import { isSupabaseConfigured } from '@/lib/supabase';
 
 interface HomeDashboardProps {
@@ -18,6 +18,7 @@ interface HomeDashboardProps {
   canClaimCheckin?: boolean;
   onOpenCheckinModal?: () => void;
   onOpenUpdatesModal?: () => void;
+  onOpenShopModal?: () => void;
 }
 
 interface BeforeInstallPromptEvent extends Event {
@@ -39,6 +40,7 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
   canClaimCheckin = false,
   onOpenCheckinModal,
   onOpenUpdatesModal,
+  onOpenShopModal,
 }) => {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
   const [showInstallBanner, setShowInstallBanner] = useState(false);
@@ -167,6 +169,18 @@ export const HomeDashboard: React.FC<HomeDashboardProps> = ({
               {canClaimCheckin && (
                 <span className="w-2 h-2 rounded-full bg-[#ef4444] animate-ping" />
               )}
+            </button>
+          )}
+
+          {/* Shop Button */}
+          {onOpenShopModal && (
+            <button
+              onClick={onOpenShopModal}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg text-xs font-mono font-bold bg-[#151924] hover:bg-[#1b2335] text-[#38bdf8] hover:text-white border border-[#232b3c] hover:border-[#38bdf8] transition-all cursor-pointer shadow-xs"
+              title="Toko Permata & Alat Bantu (Power-Ups)"
+            >
+              <ShoppingBag className="w-3.5 h-3.5" />
+              <span>TOKO (💎 {gems})</span>
             </button>
           )}
         </div>
