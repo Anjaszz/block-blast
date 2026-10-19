@@ -10,6 +10,7 @@ interface ShapeDockProps {
   onStartDrag: (shape: Shape, e: React.PointerEvent) => void;
   isRotateMode?: boolean;
   isToolActive?: boolean;
+  rotatingTargetId?: string | null;
 }
 
 export const ShapeDock: React.FC<ShapeDockProps> = ({
@@ -19,6 +20,7 @@ export const ShapeDock: React.FC<ShapeDockProps> = ({
   onStartDrag,
   isRotateMode = false,
   isToolActive = false,
+  rotatingTargetId = null,
 }) => {
   return (
     <div className={`w-full max-w-[420px] mx-auto mt-4 p-3 bg-[#11141d] rounded-xl border transition-all flex items-center justify-around gap-2 sm:gap-3 min-h-[110px] sm:min-h-[120px] ${
@@ -67,7 +69,9 @@ export const ShapeDock: React.FC<ShapeDockProps> = ({
             }}
             className={`relative flex-1 h-24 rounded-lg border flex items-center justify-center p-1.5 transition-all select-none touch-none overflow-hidden ${
               isRotateMode
-                ? 'border-2 border-[#38bdf8] bg-[#12233b] ring-2 ring-[#38bdf8]/40 animate-pulse cursor-pointer hover:scale-105'
+                ? shape.id === rotatingTargetId
+                  ? 'border-2 border-[#10b981] bg-[#122e2a] ring-2 ring-[#10b981]/60 shadow-[0_0_15px_rgba(16,185,129,0.35)] cursor-pointer scale-105'
+                  : 'border-2 border-[#38bdf8] bg-[#12233b] ring-2 ring-[#38bdf8]/40 animate-pulse cursor-pointer hover:scale-105'
                 : isToolActive
                 ? 'opacity-40 cursor-not-allowed border-[#1c2230] bg-[#121620]'
                 : 'cursor-grab active:cursor-grabbing hover:border-[#3b82f6]/60 hover:bg-[#1a202c]'
@@ -84,8 +88,20 @@ export const ShapeDock: React.FC<ShapeDockProps> = ({
             }`}
           >
             {isRotateMode && (
-              <span className="absolute top-1.5 px-2 py-0.5 bg-[#0284c7] text-[9px] font-mono font-bold text-white rounded-full shadow-xs tracking-wider">
-                PILIH 🔄
+              <span
+                className={`absolute top-1.5 px-2 py-0.5 text-[9px] font-mono font-black text-white rounded-full shadow-xs tracking-wider ${
+                  shape.id === rotatingTargetId
+                    ? 'bg-[#10b981] animate-bounce shadow-[0_0_8px_rgba(16,185,129,0.5)]'
+                    : rotatingTargetId !== null
+                    ? 'bg-[#0369a1]'
+                    : 'bg-[#0284c7]'
+                }`}
+              >
+                {shape.id === rotatingTargetId
+                  ? 'PUTAR LAGI 🔄'
+                  : rotatingTargetId !== null
+                  ? 'GANTI INI 🔄'
+                  : 'PILIH 🔄'}
               </span>
             )}
             {isGift && !isRotateMode && (

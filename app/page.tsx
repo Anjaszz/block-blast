@@ -18,7 +18,7 @@ import { DailyCheckinModal } from '@/components/DailyCheckinModal';
 import { UpdatesModal } from '@/components/UpdatesModal';
 import { ShopModal } from '@/components/ShopModal';
 import { PowerUpBar, PowerUpTool } from '@/components/PowerUpBar';
-import { getUserGems, getCheckinStatus, consumeGem } from '@/lib/gems';
+import { getUserGems, getCheckinStatus, consumeGem, addGems } from '@/lib/gems';
 
 import { Grid, Shape, Player, RoomState, RoomInfo, StageMode } from '@/lib/types';
 import {
@@ -42,7 +42,7 @@ import {
   fetchRoomsFromDb,
   deleteRoomFromDb,
 } from '@/lib/supabase';
-import { Flame, Sparkles, Skull, Swords } from 'lucide-react';
+import { Flame, Sparkles, Skull, Swords, Check, RotateCw } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function Home() {
@@ -72,6 +72,9 @@ export default function Home() {
   const [canClaimCheckin, setCanClaimCheckin] = useState(false);
   const [hasUsedContinue, setHasUsedContinue] = useState(false);
   const [activeTool, setActiveTool] = useState<PowerUpTool>(null);
+  const [rotateSessionPaid, setRotateSessionPaid] = useState(false);
+  const [chosenRotateBlockId, setChosenRotateBlockId] = useState<string | null>(null);
+  const initialShapesRef = useRef<(Shape | null)[]>([]);
 
   // Game Engine State
   const [grid, setGrid] = useState<Grid>(createEmptyGrid);
@@ -305,30 +308,83 @@ export default function Home() {
     setIncomingAttackAlert(null);
     setHasUsedContinue(false);
     setActiveTool(null);
+    setRotateSessionPaid(false);
+    setChosenRotateBlockId(null);
+    initialShapesRef.current = [];
   }, []);
 
-  // Power-Up: Rotate a specific Shape (1 Gem)
+  // Power-Up: Rotate a specific Shape (Can be clicked repeatedly, but only 1 block is rotated per session)
   const handleRotateTargetShape = useCallback(
     (targetShape: Shape) => {
       if (currentView !== 'solo' || isGameOver) return;
       const targetIdx = shapes.findIndex((s) => s && s.id === targetShape.id);
       if (targetIdx === -1 || !shapes[targetIdx]) return;
 
-      const success = consumeGem(1);
-      if (!success) return;
+      // Charge 1 gem only once per rotate session
+      if (!rotateSessionPaid) {
+        const success = consumeGem(1);
+        if (!success) {
+          setActiveTool(null);
+          setRotateSessionPaid(false);
+          setChosenRotateBlockId(null);
+          initialShapesRef.current = [];
+          return;
+        }
+        setGems(getUserGems());
+        setRotateSessionPaid(true);
+      }
 
-      setGems(getUserGems());
       soundManager.playRotate();
 
-      const rotated = rotateShape(shapes[targetIdx]!);
-      const nextShapes = [...shapes];
+      // Base shapes from initial state before any rotation started in this session
+      const baseShapes = initialShapesRef.current.length === shapes.length
+        ? initialShapesRef.current.map((s) => (s ? { ...s } : null))
+        : shapes.map((s) => (s ? { ...s } : null));
+
+      // Jika pemain terus memutar balok yang sama: putar dari bentuknya saat ini.
+      // Jika pemain beralih ke balok lain: balok sebelumnya kembali ke bentuk awal (baseShapes),
+      // dan balok yang baru dipilih mulai diputar dari bentuk awalnya (baseShapes[targetIdx])!
+      const isSameBlock = chosenRotateBlockId === targetShape.id;
+      const blockToRotate = (isSameBlock && shapes[targetIdx])
+        ? shapes[targetIdx]!
+        : (baseShapes[targetIdx] || shapes[targetIdx]!);
+
+      const rotated = rotateShape(blockToRotate);
+      const nextShapes = [...baseShapes];
       nextShapes[targetIdx] = rotated;
+
       setShapes(nextShapes);
       setSelectedShape(rotated);
-      setActiveTool(null);
+      setChosenRotateBlockId(rotated.id);
     },
-    [currentView, isGameOver, shapes]
+    [currentView, isGameOver, shapes, rotateSessionPaid, chosenRotateBlockId]
   );
+
+  // Selesai memutar balok
+  const handleFinishRotate = useCallback(() => {
+    setActiveTool(null);
+    setRotateSessionPaid(false);
+    setChosenRotateBlockId(null);
+    initialShapesRef.current = [];
+    soundManager.playPickup();
+  }, []);
+
+  // Batalkan mode putar (kembalikan semua balok ke posisi semula dan refund permata jika belum commit)
+  const handleCancelRotate = useCallback(() => {
+    if (rotateSessionPaid) {
+      if (initialShapesRef.current.length > 0) {
+        setShapes([...initialShapesRef.current]);
+      }
+      addGems(1);
+      setGems(getUserGems());
+    }
+    setActiveTool(null);
+    setRotateSessionPaid(false);
+    setChosenRotateBlockId(null);
+    initialShapesRef.current = [];
+    setSelectedShape(null);
+    setHoverPos(null);
+  }, [rotateSessionPaid]);
 
   // Power-Up: Rotate button from PowerUpBar (Toggle Rotate Mode to pick target shape)
   const handleRotateCurrentShape = useCallback(() => {
@@ -338,6 +394,9 @@ export default function Home() {
 
     setSelectedShape(null);
     setHoverPos(null);
+    setRotateSessionPaid(false);
+    setChosenRotateBlockId(null);
+    initialShapesRef.current = shapes.map((s) => (s ? { ...s } : null));
     // Aktifkan mode putar sehingga user bisa memilih balok mana yang ingin diputar
     setActiveTool((prev) => (prev === 'rotate' ? null : 'rotate'));
   }, [currentView, isGameOver, shapes]);
@@ -352,14 +411,13 @@ export default function Home() {
     setHasUsedContinue(true);
 
     // Clears rows 3 & 4 (center rows) to give breathing space for the revived player
-    setGrid((prev) =>
-      prev.map((row, rIdx) =>
-        rIdx === 3 || rIdx === 4 ? row.map(() => null) : [...row]
-      )
+    const revivedGrid = grid.map((row, rIdx) =>
+      rIdx === 3 || rIdx === 4 ? row.map(() => null) : [...row]
     );
+    setGrid(revivedGrid);
 
-    // Provide 3 fresh guaranteed shapes
-    setShapes(generateShapeTrio());
+    // Provide 3 fresh guaranteed shapes that fit the revived board
+    setShapes(generateShapeTrio(revivedGrid));
     setSelectedShape(null);
     setHoverPos(null);
     setIsGameOver(false);
@@ -438,7 +496,6 @@ export default function Home() {
       // 2. Consume shape
       const nextShapes = shapes.map((s) => (s?.id === shape.id ? null : s));
       const allUsed = nextShapes.every((s) => s === null);
-      const updatedShapes = allUsed ? generateShapeTrio() : nextShapes;
 
       // 3. Clear lines
       const { rowsToClear, colsToClear } = checkCompletedLines(nextGrid);
@@ -536,6 +593,9 @@ export default function Home() {
         setScore(finalScore);
         setCombo(0);
       }
+
+      // Generate next trio after line clearing so shapes adapt to the actual final board state
+      const updatedShapes = allUsed ? generateShapeTrio(finalGrid) : nextShapes;
 
       setGrid(finalGrid);
       setShapes(updatedShapes);
@@ -1135,24 +1195,67 @@ export default function Home() {
                 </button>
               )}
 
-              {/* Solo Mode Power-Ups Toolbar (Rotate, Hammer, Bomb, Shop) */}
+              {/* Mobile-Only Solo Power-Ups Toolbar (under board on mobile, hidden on desktop) */}
               {currentView === 'solo' && !isGameOver && (
-                <PowerUpBar
-                  gems={gems}
-                  activeTool={activeTool}
-                  onSelectTool={(tool) => {
-                    setSelectedShape(null);
-                    setHoverPos(null);
-                    setActiveTool(tool);
-                  }}
-                  onRotateShape={() => {
-                    setSelectedShape(null);
-                    setHoverPos(null);
-                    handleRotateCurrentShape();
-                  }}
-                  onOpenShop={() => setIsShopModalOpen(true)}
-                  hasPlayableShapes={shapes.some((s) => s !== null)}
-                />
+                <div className="w-full lg:hidden">
+                  <PowerUpBar
+                    gems={gems}
+                    activeTool={activeTool}
+                    onSelectTool={(tool) => {
+                      setSelectedShape(null);
+                      setHoverPos(null);
+                      if (activeTool === 'rotate' && rotateSessionPaid) {
+                        if (initialShapesRef.current.length > 0) {
+                          setShapes([...initialShapesRef.current]);
+                        }
+                        addGems(1);
+                        setGems(getUserGems());
+                      }
+                      setRotateSessionPaid(false);
+                      setChosenRotateBlockId(null);
+                      initialShapesRef.current = shapes.map((s) => (s ? { ...s } : null));
+                      setActiveTool(tool);
+                    }}
+                    onRotateShape={() => {
+                      setSelectedShape(null);
+                      setHoverPos(null);
+                      handleRotateCurrentShape();
+                    }}
+                    onOpenShop={() => setIsShopModalOpen(true)}
+                    hasPlayableShapes={shapes.some((s) => s !== null)}
+                    variant="horizontal"
+                    onFinishRotate={handleFinishRotate}
+                  />
+                </div>
+              )}
+
+              {/* Floating Rotate Control Bar right above dock */}
+              {activeTool === 'rotate' && currentView === 'solo' && (
+                <div className="w-full max-w-[420px] mx-auto mt-2 px-3 py-2 bg-[#12233b] border-2 border-[#38bdf8] rounded-xl flex items-center justify-between gap-2 shadow-[0_0_20px_rgba(56,189,248,0.3)] animate-pulse">
+                  <div className="flex items-center gap-2 truncate">
+                    <RotateCw className="w-4 h-4 text-[#38bdf8] animate-spin shrink-0" />
+                    <span className="text-xs font-mono font-bold text-white truncate">
+                      {rotateSessionPaid
+                        ? 'Klik lagi untuk putar, atau klik balok lain'
+                        : 'Pilih 1 balok yang ingin diputar'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <button
+                      onClick={handleFinishRotate}
+                      className="px-3 py-1 bg-[#10b981] hover:bg-[#059669] text-white text-xs font-mono font-black uppercase rounded-lg cursor-pointer flex items-center gap-1 shadow-md transition-all active:scale-95"
+                    >
+                      <Check className="w-3.5 h-3.5 stroke-[3]" />
+                      <span>SELESAI</span>
+                    </button>
+                    <button
+                      onClick={handleCancelRotate}
+                      className="px-2 py-1 bg-[#1e293b] hover:bg-[#334155] text-[#94a3b8] hover:text-white text-xs font-mono rounded-lg cursor-pointer transition-colors"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
               )}
 
               {/* Bottom Shapes Dock */}
@@ -1172,6 +1275,7 @@ export default function Home() {
                 onStartDrag={handleStartDrag}
                 isRotateMode={activeTool === 'rotate'}
                 isToolActive={activeTool !== null}
+                rotatingTargetId={chosenRotateBlockId}
               />
 
               <div className="text-[11px] font-mono text-[#64748b] text-center mt-3">
@@ -1195,6 +1299,47 @@ export default function Home() {
                   className="w-full py-2 bg-[#161a25] hover:bg-[#1d2332] text-xs font-mono text-[#94a3b8] hover:text-white rounded-lg border border-[#222938] transition-colors cursor-pointer"
                 >
                   KELUAR STAGE
+                </button>
+              </div>
+            )}
+
+            {/* Right: Solo Mode Power-Ups Sidebar (Desktop Only - Samping Arena) */}
+            {currentView === 'solo' && !isGameOver && (
+              <div className="hidden lg:flex w-full max-w-[270px] flex-col shrink-0 mt-1">
+                <PowerUpBar
+                  gems={gems}
+                  activeTool={activeTool}
+                  onSelectTool={(tool) => {
+                    setSelectedShape(null);
+                    setHoverPos(null);
+                    if (activeTool === 'rotate' && rotateSessionPaid) {
+                      if (initialShapesRef.current.length > 0) {
+                        setShapes([...initialShapesRef.current]);
+                      }
+                      addGems(1);
+                      setGems(getUserGems());
+                    }
+                    setRotateSessionPaid(false);
+                    setChosenRotateBlockId(null);
+                    initialShapesRef.current = shapes.map((s) => (s ? { ...s } : null));
+                    setActiveTool(tool);
+                  }}
+                  onRotateShape={() => {
+                    setSelectedShape(null);
+                    setHoverPos(null);
+                    handleRotateCurrentShape();
+                  }}
+                  onOpenShop={() => setIsShopModalOpen(true)}
+                  hasPlayableShapes={shapes.some((s) => s !== null)}
+                  variant="sidebar"
+                  onFinishRotate={handleFinishRotate}
+                />
+
+                <button
+                  onClick={handleRequestExit}
+                  className="w-full mt-2.5 py-2 bg-[#141822] hover:bg-[#1a202e] text-xs font-mono text-[#94a3b8] hover:text-white rounded-xl border border-[#202738] transition-colors cursor-pointer text-center"
+                >
+                  KEMBALI KE MENU
                 </button>
               </div>
             )}

@@ -1,4 +1,6 @@
-import { Shape } from '../types';
+import { Grid, Shape } from '../types';
+
+export const BOARD_SIZE = 8;
 
 export interface ShapeTemplate {
   name: string;
@@ -62,9 +64,95 @@ export const SHAPE_TEMPLATES: ShapeTemplate[] = [
   { name: 'square3x3', matrix: [[1, 1, 1], [1, 1, 1], [1, 1, 1]], color: '#ef4444' },
 ];
 
-export function generateRandomShape(): Shape {
-  const template = SHAPE_TEMPLATES[Math.floor(Math.random() * SHAPE_TEMPLATES.length)];
-  
+// Pembagian Tier Balok
+export const SMALL_SHAPES: ShapeTemplate[] = SHAPE_TEMPLATES.slice(0, 9);
+export const MEDIUM_SHAPES: ShapeTemplate[] = SHAPE_TEMPLATES.slice(9, 20);
+export const LARGE_SHAPES: ShapeTemplate[] = SHAPE_TEMPLATES.slice(20);
+
+/**
+ * Cek apakah template balok muat diletakkan di posisi mana pun pada papan
+ */
+export function canTemplateFitOnGrid(grid: Grid, template: ShapeTemplate): boolean {
+  const height = template.matrix.length;
+  const width = template.matrix[0].length;
+
+  for (let r = 0; r <= BOARD_SIZE - height; r++) {
+    for (let c = 0; c <= BOARD_SIZE - width; c++) {
+      let fits = true;
+      for (let tr = 0; tr < height; tr++) {
+        for (let tc = 0; tc < width; tc++) {
+          if (template.matrix[tr][tc] === 1 && grid[r + tr][c + tc] !== null) {
+            fits = false;
+            break;
+          }
+        }
+        if (!fits) break;
+      }
+      if (fits) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Cek apakah meletakkan template balok ini bisa meledakkan minimal 1 baris atau kolom
+ */
+export function canTemplateClearLinesOnGrid(grid: Grid, template: ShapeTemplate): boolean {
+  const height = template.matrix.length;
+  const width = template.matrix[0].length;
+
+  for (let r = 0; r <= BOARD_SIZE - height; r++) {
+    for (let c = 0; c <= BOARD_SIZE - width; c++) {
+      let fits = true;
+      for (let tr = 0; tr < height; tr++) {
+        for (let tc = 0; tc < width; tc++) {
+          if (template.matrix[tr][tc] === 1 && grid[r + tr][c + tc] !== null) {
+            fits = false;
+            break;
+          }
+        }
+        if (!fits) break;
+      }
+
+      if (fits) {
+        // Cek baris horizontal yang akan terisi penuh
+        for (let tr = 0; tr < height; tr++) {
+          const checkR = r + tr;
+          let rowComplete = true;
+          for (let tc = 0; tc < BOARD_SIZE; tc++) {
+            const willBeFilled =
+              grid[checkR][tc] !== null ||
+              (tc >= c && tc < c + width && template.matrix[tr][tc - c] === 1);
+            if (!willBeFilled) {
+              rowComplete = false;
+              break;
+            }
+          }
+          if (rowComplete) return true;
+        }
+
+        // Cek kolom vertikal yang akan terisi penuh
+        for (let tc = 0; tc < width; tc++) {
+          const checkC = c + tc;
+          let colComplete = true;
+          for (let tr = 0; tr < BOARD_SIZE; tr++) {
+            const willBeFilled =
+              grid[tr][checkC] !== null ||
+              (tr >= r && tr < r + height && template.matrix[tr - r][tc] === 1);
+            if (!willBeFilled) {
+              colComplete = false;
+              break;
+            }
+          }
+          if (colComplete) return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+export function instantiateShape(template: ShapeTemplate): Shape {
   return {
     id: `${template.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
     matrix: template.matrix,
@@ -74,8 +162,147 @@ export function generateRandomShape(): Shape {
   };
 }
 
-export function generateShapeTrio(): Shape[] {
-  return [generateRandomShape(), generateRandomShape(), generateRandomShape()];
+export function generateRandomShape(): Shape {
+  const roll = Math.random();
+  let pool = MEDIUM_SHAPES;
+  if (roll < 0.60) {
+    pool = SMALL_SHAPES;
+  } else if (roll < 0.90) {
+    pool = MEDIUM_SHAPES;
+  } else {
+    pool = LARGE_SHAPES;
+  }
+  const template = pool[Math.floor(Math.random() * pool.length)];
+  return instantiateShape(template);
+}
+
+/**
+ * Smart Adaptive Trio Generator (Block Blast Style):
+ * - Menjamin minimal 2 dari 3 balok BISA diletakkan di papan
+ * - Maksimal hanya 1 balok besar per trio (mencegah trio maut)
+ * - Jika papan sedang padat (>44% terisi), otomatis mengutamakan balok kecil atau balok pemecah garis
+ */
+export function generateShapeTrio(grid?: Grid): Shape[] {
+  let filledCells = 0;
+  if (grid) {
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (grid[r][c] !== null) filledCells++;
+      }
+    }
+  }
+
+  const isCrowded = filledCells >= 28; // ~44% papan terisi
+  const isEmergency = filledCells >= 38; // ~60% papan terisi (kritis)
+
+  const chosenTemplates: ShapeTemplate[] = [];
+
+  const pickFromPool = (pool: ShapeTemplate[], filterFit: boolean = false): ShapeTemplate => {
+    let candidates = pool;
+    if (grid && filterFit) {
+      const fitting = pool.filter((t) => canTemplateFitOnGrid(grid, t));
+      if (fitting.length > 0) candidates = fitting;
+    }
+
+    // Hindari duplikat bentuk yang persis sama dalam 1 trio
+    const unused = candidates.filter((t) => !chosenTemplates.some((c) => c.name === t.name));
+    const finalPool = unused.length > 0 ? unused : candidates;
+    return finalPool[Math.floor(Math.random() * finalPool.length)];
+  };
+
+  // SLOT 1: Primary Piece
+  if (isEmergency) {
+    const clearingSmall = SMALL_SHAPES.filter((t) => grid && canTemplateClearLinesOnGrid(grid, t));
+    if (clearingSmall.length > 0) {
+      chosenTemplates.push(clearingSmall[Math.floor(Math.random() * clearingSmall.length)]);
+    } else {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    }
+  } else if (isCrowded) {
+    const roll = Math.random();
+    if (roll < 0.65) {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    } else {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+    }
+  } else {
+    const roll = Math.random();
+    if (roll < 0.12) {
+      // Hanya 12% peluang balok besar di kondisi papan normal
+      chosenTemplates.push(pickFromPool(LARGE_SHAPES, true));
+    } else if (roll < 0.60) {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+    } else {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    }
+  }
+
+  const hasLargePiece = chosenTemplates.some((t) => LARGE_SHAPES.some((l) => l.name === t.name));
+
+  // SLOT 2: Complementary Piece (Jika Slot 1 besar, Slot 2 wajib kecil/sedang)
+  if (hasLargePiece || isCrowded) {
+    const roll = Math.random();
+    if (roll < 0.65) {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    } else {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+    }
+  } else {
+    const roll = Math.random();
+    if (roll < 0.50) {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    } else {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+    }
+  }
+
+  // SLOT 3: Lifeline Piece (Jaminan balok kecil atau pemecah garis)
+  if (isEmergency || isCrowded) {
+    const clearingPieces = [...SMALL_SHAPES, ...MEDIUM_SHAPES].filter(
+      (t) => grid && canTemplateClearLinesOnGrid(grid, t)
+    );
+    if (clearingPieces.length > 0 && Math.random() < 0.7) {
+      chosenTemplates.push(clearingPieces[Math.floor(Math.random() * clearingPieces.length)]);
+    } else {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    }
+  } else {
+    const roll = Math.random();
+    if (roll < 0.70) {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    } else {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+    }
+  }
+
+  // GUARANTEE CHECK:
+  // Pastikan MINIMAL 2 dari 3 balok bisa diletakkan di papan saat ini
+  if (grid) {
+    let fittingCount = chosenTemplates.filter((t) => canTemplateFitOnGrid(grid, t)).length;
+
+    if (fittingCount < 2) {
+      for (let i = 0; i < chosenTemplates.length; i++) {
+        if (!canTemplateFitOnGrid(grid, chosenTemplates[i])) {
+          const fittingSmall = SMALL_SHAPES.filter((t) => canTemplateFitOnGrid(grid, t));
+          if (fittingSmall.length > 0) {
+            chosenTemplates[i] = fittingSmall[Math.floor(Math.random() * fittingSmall.length)];
+            fittingCount++;
+            if (fittingCount >= 2) break;
+          }
+        }
+      }
+    }
+
+    // Safety fallback mutlak: jika papan sangat sempit, pastikan minimal balok dot muat
+    if (fittingCount === 0) {
+      const dotTemplate = SMALL_SHAPES[0];
+      if (canTemplateFitOnGrid(grid, dotTemplate)) {
+        chosenTemplates[0] = dotTemplate;
+      }
+    }
+  }
+
+  return chosenTemplates.map(instantiateShape);
 }
 
 // 4 Pilihan Balok Raksasa untuk Gift Attack ke Lawan
