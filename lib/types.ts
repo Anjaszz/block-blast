@@ -63,7 +63,10 @@ export interface LiveEmote {
   id: string;
   senderId: string;
   senderName: string;
+  targetId?: string;
+  targetName?: string;
   emote: string;
+  isFlex?: boolean;
   timestamp: number;
 }
 

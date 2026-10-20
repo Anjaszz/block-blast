@@ -43,7 +43,7 @@ import {
   fetchRoomsFromDb,
   deleteRoomFromDb,
 } from '@/lib/supabase';
-import { Flame, Sparkles, Skull, Swords, Check, RotateCw } from 'lucide-react';
+import { Flame, Sparkles, Skull, Swords, Check, RotateCw, Crown } from 'lucide-react';
 import confetti from 'canvas-confetti';
 
 export default function Home() {
@@ -924,13 +924,19 @@ export default function Home() {
           return next;
         });
       },
-      onPlayerEmote: (senderId, senderName, emote) => {
+      onPlayerEmote: (senderId, senderName, emote, targetId, targetName, isFlex) => {
         soundManager.playEmoteSound();
+        const isSelf = senderId === validPlayerId;
+        const isTargetMe = Boolean(targetId && targetId === validPlayerId);
+
         const newEvent: FloatingEmoteEvent = {
           id: `emote-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
           senderName,
+          targetName,
           emote,
-          isSelf: senderId === validPlayerId,
+          isSelf,
+          isTargetMe,
+          isFlex,
           xPercent: 18 + Math.random() * 64,
           createdAt: Date.now(),
         };
@@ -938,17 +944,19 @@ export default function Home() {
         setFloatingEmotes((prev) => [...prev.slice(-10), newEvent]);
         setTimeout(() => {
           setFloatingEmotes((prev) => prev.filter((e) => e.id !== newEvent.id));
-        }, 3000);
+        }, 3200);
 
-        if (senderId) {
-          setPlayerOverheadEmotes((prev) => ({ ...prev, [senderId]: emote }));
+        // Pasang overhead badge di target player (dan pengirim)
+        const badgeTarget = targetId || senderId;
+        if (badgeTarget) {
+          setPlayerOverheadEmotes((prev) => ({ ...prev, [badgeTarget]: emote }));
           setTimeout(() => {
             setPlayerOverheadEmotes((prev) => {
               const updated = { ...prev };
-              delete updated[senderId];
+              delete updated[badgeTarget];
               return updated;
             });
-          }, 2800);
+          }, 3000);
         }
       },
     });
@@ -1120,7 +1128,9 @@ export default function Home() {
             onStartGame={handleStartStageMatch}
             onLeaveRoom={handleLeaveRoom}
             playerEmotes={playerOverheadEmotes}
-            onSendEmote={(emote) => stageManager?.sendEmote(emote)}
+            onSendEmote={(emote, target, isFlex) => {
+              stageManager?.sendEmote(emote, target.id, target.username, isFlex);
+            }}
           />
         )}
 
@@ -1333,17 +1343,6 @@ export default function Home() {
             {/* Right: Stage Live Scoreboard (Multiplayer Mode) */}
             {currentView === 'stage_playing' && roomState && (
               <div className="w-full max-w-[340px] flex flex-col gap-3">
-                <div className="flex items-center justify-between px-1">
-                  <span className="text-[10px] font-mono font-bold text-[#94a3b8] tracking-wider uppercase flex items-center gap-1.5">
-                    <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
-                    LIVE MATCH
-                  </span>
-                  <QuickEmoteSystem
-                    onSendEmote={(emote) => stageManager?.sendEmote(emote)}
-                    floatingEmotes={[]}
-                  />
-                </div>
-
                 <StageScoreboard
                   players={roomState.players}
                   localPlayerId={stageManager ? stageManager.getLocalPlayer().id : playerId}
@@ -1351,6 +1350,9 @@ export default function Home() {
                   mode={roomState.mode}
                   timeLeft={roomState.timeLeft}
                   playerEmotes={playerOverheadEmotes}
+                  onSendEmote={(emote, target, isFlex) => {
+                    stageManager?.sendEmote(emote, target.id, target.username, isFlex);
+                  }}
                 />
 
                 <button
@@ -1450,17 +1452,36 @@ export default function Home() {
                 transform: 'translateX(-50%)',
               }}
             >
-              <span
-                className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black tracking-wider shadow-lg backdrop-blur-md border ${
-                  item.isSelf
+              {/* Sender & Target Flex Badge */}
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1 rounded-full text-[10px] font-mono font-black tracking-wider shadow-xl backdrop-blur-md border ${
+                  item.isFlex
+                    ? 'bg-gradient-to-r from-[#d97706] via-[#eab308] to-[#facc15] border-[#fef08a] text-black shadow-[0_0_20px_rgba(234,179,8,0.7)]'
+                    : item.isSelf
                     ? 'bg-[#2563eb]/95 border-white/50 text-white shadow-[0_0_15px_rgba(37,99,235,0.6)]'
                     : 'bg-[#181d2a]/95 border-[#38bdf8]/60 text-[#38bdf8] shadow-[0_0_15px_rgba(56,189,248,0.4)]'
                 }`}
               >
-                {item.isSelf ? 'KAMU' : item.senderName}
-              </span>
+                {item.isFlex && <Crown className="w-3.5 h-3.5 fill-black text-black shrink-0" />}
+                <span>{item.isSelf ? 'KAMU' : item.senderName}</span>
+                {item.targetName && (
+                  <>
+                    <span className="opacity-60 font-normal">➔</span>
+                    <span className={item.isFlex ? 'underline font-black' : 'text-white'}>
+                      {item.isTargetMe ? 'KAMU' : item.targetName}
+                    </span>
+                  </>
+                )}
+              </div>
 
-              <span className="text-4xl sm:text-5xl filter drop-shadow-[0_0_18px_rgba(255,255,255,0.8)] animate-bounce">
+              {/* Big Bouncing Emote */}
+              <span
+                className={`text-4xl sm:text-5xl filter animate-bounce select-none ${
+                  item.isFlex
+                    ? 'drop-shadow-[0_0_22px_rgba(234,179,8,0.9)] scale-110'
+                    : 'drop-shadow-[0_0_18px_rgba(255,255,255,0.8)]'
+                }`}
+              >
                 {item.emote}
               </span>
             </div>

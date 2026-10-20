@@ -1,9 +1,7 @@
-'use client';
-
 import React, { useState } from 'react';
-import { Users, Copy, Check, Play, Share2, Lock, Globe, ArrowLeft, Crown, Swords, Timer } from 'lucide-react';
+import { Users, Copy, Check, Play, Share2, Lock, Globe, ArrowLeft, Crown, Swords, Timer, Smile } from 'lucide-react';
 import { Player, RoomState } from '@/lib/types';
-import { QuickEmoteSystem } from './QuickEmoteSystem';
+import { PlayerTargetEmoteModal } from './QuickEmoteSystem';
 
 interface RoomLobbyViewProps {
   roomState: RoomState;
@@ -11,7 +9,7 @@ interface RoomLobbyViewProps {
   onStartGame: () => void;
   onLeaveRoom: () => void;
   playerEmotes?: Record<string, string>;
-  onSendEmote?: (emote: string) => void;
+  onSendEmote?: (emote: string, targetPlayer: Player, isFlex?: boolean) => void;
 }
 
 export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
@@ -24,6 +22,7 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
+  const [activeEmoteTarget, setActiveEmoteTarget] = useState<Player | null>(null);
 
   const isHost = roomState.players.length > 0 && roomState.players[0].id === localPlayerId;
 
@@ -96,14 +95,6 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Quick Emote in Lobby */}
-          {onSendEmote && (
-            <QuickEmoteSystem
-              onSendEmote={onSendEmote}
-              floatingEmotes={[]}
-            />
-          )}
-
           {/* Copy Code */}
           <button
             onClick={handleCopyCode}
@@ -169,9 +160,22 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
                   )}
                 </div>
 
-                <span className="text-[11px] font-mono text-green-400 shrink-0">
-                  SIAP
-                </span>
+                <div className="flex items-center gap-2.5 shrink-0">
+                  {onSendEmote && !isMe && (
+                    <button
+                      onClick={() => setActiveEmoteTarget(p)}
+                      className="p-1 px-2 bg-[#182132] hover:bg-[#25324a] border border-[#263145] hover:border-[#38bdf8] text-[#94a3b8] hover:text-white rounded-lg text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95"
+                      title={`Kirim Emote Langsung ke ${p.username}`}
+                    >
+                      <Smile className="w-3.5 h-3.5 text-[#facc15]" />
+                      <span className="font-bold">REAKSI</span>
+                    </button>
+                  )}
+
+                  <span className="text-[11px] font-mono text-green-400 shrink-0">
+                    SIAP
+                  </span>
+                </div>
               </div>
             );
           })}
@@ -214,6 +218,20 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
         <div className="w-full py-3 px-4 bg-[#181d2a] border border-[#262e3f] rounded-xl text-center text-xs font-mono text-[#94a3b8]">
           MENUNGGU HOST MEMULAI PERTANDINGAN...
         </div>
+      )}
+
+      {/* MODAL TARGET REAKSI SPESIFIK 1 PEMAIN */}
+      {activeEmoteTarget && onSendEmote && (
+        <PlayerTargetEmoteModal
+          isOpen={Boolean(activeEmoteTarget)}
+          onClose={() => setActiveEmoteTarget(null)}
+          targetPlayer={activeEmoteTarget}
+          isLocalRank1={false} // Di lobby belum ada skor
+          onSendEmote={(emote, target, isFlex) => {
+            onSendEmote(emote, target, isFlex);
+            setActiveEmoteTarget(null);
+          }}
+        />
       )}
     </div>
   );

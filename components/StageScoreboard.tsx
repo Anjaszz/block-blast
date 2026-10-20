@@ -1,8 +1,7 @@
-'use client';
-
-import React from 'react';
+import React, { useState } from 'react';
 import { Player, StageMode } from '@/lib/types';
-import { Crown, Flame, Swords, Timer } from 'lucide-react';
+import { Crown, Flame, Swords, Timer, Smile } from 'lucide-react';
+import { PlayerTargetEmoteModal } from './QuickEmoteSystem';
 
 interface StageScoreboardProps {
   players: Player[];
@@ -11,6 +10,7 @@ interface StageScoreboardProps {
   mode?: StageMode;
   timeLeft?: number;
   playerEmotes?: Record<string, string>;
+  onSendEmote?: (emote: string, targetPlayer: Player, isFlex?: boolean) => void;
 }
 
 export const StageScoreboard: React.FC<StageScoreboardProps> = ({
@@ -20,7 +20,15 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
   mode = 'survival',
   timeLeft = 0,
   playerEmotes = {},
+  onSendEmote,
 }) => {
+  const [activeEmoteTarget, setActiveEmoteTarget] = useState<Player | null>(null);
+
+  // Cek apakah pemain lokal sedang berada di posisi Rank 1 (Top 1)
+  const isLocalRank1 = Boolean(
+    players.length > 0 && players[0].id === localPlayerId && players[0].isAlive
+  );
+
   const maxScore = Math.max(...players.map((p) => p.score), 100);
 
   const formatTime = (seconds: number) => {
@@ -134,10 +142,27 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
                   )}
                 </div>
 
-                {/* Score */}
-                <span className="font-mono font-bold text-xs text-white shrink-0">
-                  {player.score.toLocaleString()}
-                </span>
+                {/* Score & Targeted Reaction Button */}
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className="font-mono font-bold text-xs text-white shrink-0">
+                    {player.score.toLocaleString()}
+                  </span>
+
+                  {/* Tombol Emote Khusus ke Pemain ini */}
+                  {onSendEmote && !isLocal && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveEmoteTarget(player);
+                      }}
+                      className="p-1 px-1.5 bg-[#182132] hover:bg-[#25324a] border border-[#2b3952] hover:border-[#38bdf8] text-[#94a3b8] hover:text-white rounded-md text-[10px] font-mono flex items-center gap-1 transition-all cursor-pointer shadow-xs active:scale-95 shrink-0"
+                      title={`Kirim Emote Langsung ke ${player.username}`}
+                    >
+                      <Smile className="w-3.5 h-3.5 text-[#facc15]" />
+                      <span className="text-[9px] font-bold hidden sm:inline">REAKSI</span>
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Progress Bar (Solid, no gradient) */}
@@ -154,6 +179,20 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
           );
         })}
       </div>
+
+      {/* MODAL TARGET REAKSI SPESIFIK 1 PEMAIN */}
+      {activeEmoteTarget && onSendEmote && (
+        <PlayerTargetEmoteModal
+          isOpen={Boolean(activeEmoteTarget)}
+          onClose={() => setActiveEmoteTarget(null)}
+          targetPlayer={activeEmoteTarget}
+          isLocalRank1={isLocalRank1}
+          onSendEmote={(emote, target, isFlex) => {
+            onSendEmote(emote, target, isFlex);
+            setActiveEmoteTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 };

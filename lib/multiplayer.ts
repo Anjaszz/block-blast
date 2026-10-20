@@ -21,7 +21,14 @@ export interface MultiplayerCallbacks {
   onGameOver: (winner: Player | null, rankedPlayers?: Player[]) => void;
   onRoomClosed?: (message: string) => void;
   onIncomingAttack?: (attackerName: string, shape: Shape) => void;
-  onPlayerEmote?: (senderId: string, senderName: string, emote: string) => void;
+  onPlayerEmote?: (
+    senderId: string,
+    senderName: string,
+    emote: string,
+    targetId?: string,
+    targetName?: string,
+    isFlex?: boolean
+  ) => void;
 }
 
 // Helper to rank players:
@@ -214,7 +221,10 @@ export class StageManager {
         this.callbacks.onPlayerEmote?.(
           payload.senderId || '',
           payload.senderName,
-          payload.emote
+          payload.emote,
+          payload.targetId,
+          payload.targetName,
+          payload.isFlex
         );
       }
     });
@@ -397,13 +407,16 @@ export class StageManager {
     }
   }
 
-  // Broadcast quick emote reaction to all room members
-  public sendEmote(emote: string) {
+  // Broadcast quick emote reaction to all room members (targeted to 1 player or general)
+  public sendEmote(emote: string, targetId?: string, targetName?: string, isFlex?: boolean) {
     if (this.isBotMode) {
       this.callbacks.onPlayerEmote?.(
         this.localPlayer.id,
         this.localPlayer.username,
-        emote
+        emote,
+        targetId,
+        targetName,
+        isFlex
       );
       return;
     }
@@ -417,6 +430,9 @@ export class StageManager {
             senderId: this.localPlayer.id,
             senderName: this.localPlayer.username,
             emote,
+            targetId,
+            targetName,
+            isFlex: Boolean(isFlex),
             timestamp: Date.now(),
           },
         });
@@ -429,7 +445,10 @@ export class StageManager {
     this.callbacks.onPlayerEmote?.(
       this.localPlayer.id,
       this.localPlayer.username,
-      emote
+      emote,
+      targetId,
+      targetName,
+      isFlex
     );
   }
 
