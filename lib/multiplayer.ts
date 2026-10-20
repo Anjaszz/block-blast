@@ -21,6 +21,7 @@ export interface MultiplayerCallbacks {
   onGameOver: (winner: Player | null, rankedPlayers?: Player[]) => void;
   onRoomClosed?: (message: string) => void;
   onIncomingAttack?: (attackerName: string, shape: Shape) => void;
+  onPlayerEmote?: (senderId: string, senderName: string, emote: string) => void;
 }
 
 // Helper to rank players:
@@ -95,6 +96,10 @@ export class StageManager {
 
   public getRoomState(): RoomState {
     return this.state;
+  }
+
+  public getLocalPlayer(): Player {
+    return this.localPlayer;
   }
 
   public joinOrCreate(
@@ -191,8 +196,26 @@ export class StageManager {
 
     // Handle attack block broadcast from a rival
     this.channel.on('broadcast', { event: 'player_attack' }, ({ payload }) => {
-      if (payload?.targetId === this.localPlayer.id && payload?.shape) {
+      // Direct targetId match OR fallback in 1v1 match if sent from the rival
+      const isTargetedToMe =
+        payload?.targetId === this.localPlayer.id ||
+        (this.state.players.length <= 2 &&
+          Boolean(payload?.attackerName) &&
+          payload.attackerName !== this.localPlayer.username);
+
+      if (isTargetedToMe && payload?.shape) {
         this.callbacks.onIncomingAttack?.(payload.attackerName || 'Rival', payload.shape);
+      }
+    });
+
+    // Handle live emote broadcast from any player in the room
+    this.channel.on('broadcast', { event: 'player_emote' }, ({ payload }) => {
+      if (payload?.emote && payload?.senderName) {
+        this.callbacks.onPlayerEmote?.(
+          payload.senderId || '',
+          payload.senderName,
+          payload.emote
+        );
       }
     });
 
@@ -336,7 +359,7 @@ export class StageManager {
   }
 
   // Send selected gift obstacle block to target player
-  public sendAttack(targetPlayerId: string, shape: Shape) {
+  public async sendAttack(targetPlayerId: string, shape: Shape) {
     if (this.isBotMode) {
       // In bot mode, attacking bots slows their score gain
       this.state.players = this.state.players.map((p) => {
@@ -354,20 +377,60 @@ export class StageManager {
     }
 
     if (this.channel) {
-      this.channel.send({
-        type: 'broadcast',
-        event: 'player_attack',
-        payload: {
-          targetId: targetPlayerId,
-          attackerName: this.localPlayer.username,
-          shape: {
-            ...shape,
-            isAttackGift: true,
+      try {
+        await this.channel.send({
+          type: 'broadcast',
+          event: 'player_attack',
+          payload: {
+            targetId: targetPlayerId,
             attackerName: this.localPlayer.username,
+            shape: {
+              ...shape,
+              isAttackGift: true,
+              attackerName: this.localPlayer.username,
+            },
           },
-        },
-      });
+        });
+      } catch (err) {
+        console.error('Gagal mengirim attack broadcast:', err);
+      }
     }
+  }
+
+  // Broadcast quick emote reaction to all room members
+  public sendEmote(emote: string) {
+    if (this.isBotMode) {
+      this.callbacks.onPlayerEmote?.(
+        this.localPlayer.id,
+        this.localPlayer.username,
+        emote
+      );
+      return;
+    }
+
+    if (this.channel) {
+      try {
+        this.channel.send({
+          type: 'broadcast',
+          event: 'player_emote',
+          payload: {
+            senderId: this.localPlayer.id,
+            senderName: this.localPlayer.username,
+            emote,
+            timestamp: Date.now(),
+          },
+        });
+      } catch (err) {
+        console.error('Gagal mengirim emote broadcast:', err);
+      }
+    }
+
+    // Trigger on local client too so sender immediately sees their own emote
+    this.callbacks.onPlayerEmote?.(
+      this.localPlayer.id,
+      this.localPlayer.username,
+      emote
+    );
   }
 
   public triggerStart() {
@@ -392,6 +455,22 @@ export class StageManager {
   private startGame() {
     this.initialPlayerCount = this.state.players.length;
     this.state.status = 'playing';
+
+    // RESET status hidup & skor semua pemain untuk ronde permainan yang baru!
+    this.localPlayer.isAlive = true;
+    this.localPlayer.eliminatedAt = undefined;
+    this.localPlayer.score = 0;
+    this.localPlayer.combo = 0;
+    this.localPlayer.linesCleared = 0;
+
+    this.state.players = this.state.players.map((p) => ({
+      ...p,
+      isAlive: true,
+      eliminatedAt: undefined,
+      score: 0,
+      combo: 0,
+      linesCleared: 0,
+    }));
 
     if (this.timerInterval) clearInterval(this.timerInterval);
 

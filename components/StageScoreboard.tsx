@@ -10,6 +10,7 @@ interface StageScoreboardProps {
   roomCode: string;
   mode?: StageMode;
   timeLeft?: number;
+  playerEmotes?: Record<string, string>;
 }
 
 export const StageScoreboard: React.FC<StageScoreboardProps> = ({
@@ -18,6 +19,7 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
   roomCode,
   mode = 'survival',
   timeLeft = 0,
+  playerEmotes = {},
 }) => {
   const maxScore = Math.max(...players.map((p) => p.score), 100);
 
@@ -108,6 +110,13 @@ export const StageScoreboard: React.FC<StageScoreboardProps> = ({
                   >
                     {player.username} {isLocal && '(YOU)'}
                   </span>
+
+                  {/* Active Overhead Live Emote */}
+                  {playerEmotes[player.id] && (
+                    <span className="text-base animate-bounce drop-shadow-[0_0_8px_rgba(255,255,255,0.4)] shrink-0 select-none">
+                      {playerEmotes[player.id]}
+                    </span>
+                  )}
 
                   {/* Eliminated Badge */}
                   {!player.isAlive && (

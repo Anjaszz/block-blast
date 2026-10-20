@@ -24,18 +24,21 @@ export const AttackModal: React.FC<AttackModalProps> = ({
   // Default target: highest ranking alive rival (first in rivals list)
   useEffect(() => {
     if (rivals.length > 0) {
-      if (!rivals.some((r) => r.id === selectedTargetId)) {
+      if (!selectedTargetId || !rivals.some((r) => r.id === selectedTargetId)) {
         setSelectedTargetId(rivals[0].id);
       }
+    } else {
+      setSelectedTargetId('');
     }
   }, [rivals, selectedTargetId]);
 
   if (!isOpen) return null;
 
   const handleConfirmSend = () => {
-    if (!selectedTargetId && rivals.length > 0) return;
+    const targetId = selectedTargetId || (rivals.length > 0 ? rivals[0].id : '');
+    if (!targetId && rivals.length > 0) return;
     const shape = createAttackShape(selectedShapeIdx);
-    onSendAttack(selectedTargetId || (rivals[0]?.id ?? ''), shape);
+    onSendAttack(targetId, shape);
     onClose();
   };
 
@@ -189,17 +192,23 @@ export const AttackModal: React.FC<AttackModalProps> = ({
               </span>
             </span>
           </div>
-        ) : null}
+        ) : (
+          <div className="p-3 bg-[#261317] border border-[#ef4444]/30 rounded-xl text-center">
+            <span className="text-[11px] font-mono font-bold text-[#fca5a5]">
+              ⚠️ Tidak ada lawan aktif untuk diserang (lawan telah tereliminasi).
+            </span>
+          </div>
+        )}
 
         {/* Action Buttons */}
         <div className="flex flex-col gap-2 mt-1">
           <button
             onClick={handleConfirmSend}
             disabled={rivals.length === 0}
-            className="w-full py-3 px-4 bg-[#dc2626] hover:bg-[#ef4444] disabled:opacity-50 text-white font-mono font-bold text-xs tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(220,38,38,0.3)]"
+            className="w-full py-3 px-4 bg-[#dc2626] hover:bg-[#ef4444] disabled:opacity-40 disabled:cursor-not-allowed text-white font-mono font-bold text-xs tracking-wider rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-[0_0_20px_rgba(220,38,38,0.3)]"
           >
             <Zap className="w-4 h-4 fill-current" />
-            <span>KIRIM GIFT KE LAWAN 🚀</span>
+            <span>{rivals.length === 0 ? 'TIDAK ADA SASARAN AKTIF' : 'KIRIM GIFT KE LAWAN 🚀'}</span>
           </button>
 
           <button

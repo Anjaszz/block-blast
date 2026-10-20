@@ -165,9 +165,9 @@ export function instantiateShape(template: ShapeTemplate): Shape {
 export function generateRandomShape(): Shape {
   const roll = Math.random();
   let pool = MEDIUM_SHAPES;
-  if (roll < 0.60) {
+  if (roll < 0.30) {
     pool = SMALL_SHAPES;
-  } else if (roll < 0.90) {
+  } else if (roll < 0.75) {
     pool = MEDIUM_SHAPES;
   } else {
     pool = LARGE_SHAPES;
@@ -177,12 +177,14 @@ export function generateRandomShape(): Shape {
 }
 
 /**
- * Smart Adaptive Trio Generator (Block Blast Style):
- * - Menjamin minimal 2 dari 3 balok BISA diletakkan di papan
- * - Maksimal hanya 1 balok besar per trio (mencegah trio maut)
- * - Jika papan sedang padat (>44% terisi), otomatis mengutamakan balok kecil atau balok pemecah garis
+ * Smart Balanced Trio Generator (Block Blast Sweet-Spot):
+ * - Keseimbangan ideal: tidak membosankan (bukan spam balok 1-2 petak) & tidak mustahil (anti-trio maut).
+ * - Menjaga variasi bentuk yang seru: balok sedang (45-50%), balok besar (25-30%), balok kecil (25-30%).
+ * - Maksimal 1 balok besar per trio (mencegah kematian mendadak).
+ * - Jamin minimal 1 langkah valid (dan 2 langkah valid saat darurat) agar keterampilan pemain tetap teruji.
+ * - Beradaptasi secara wajar dengan kepadatan papan dan skor permainan.
  */
-export function generateShapeTrio(grid?: Grid): Shape[] {
+export function generateShapeTrio(grid?: Grid, currentScore: number = 0): Shape[] {
   let filledCells = 0;
   if (grid) {
     for (let r = 0; r < BOARD_SIZE; r++) {
@@ -192,8 +194,21 @@ export function generateShapeTrio(grid?: Grid): Shape[] {
     }
   }
 
-  const isCrowded = filledCells >= 28; // ~44% papan terisi
-  const isEmergency = filledCells >= 38; // ~60% papan terisi (kritis)
+  // Ambang batas tekanan papan yang realistis (papan 64 sel)
+  const isCrowded = filledCells >= 36; // >56% papan terisi (mulai padat)
+  const isEmergency = filledCells >= 48; // >=75% papan terisi (kritis/zona bahaya)
+
+  // Probabilitas kemunculan balok besar berdasarkan skor dan kondisi papan
+  let largeProb = 0.28; // ~28% peluang balok besar di kondisi normal
+  if (currentScore < 600) {
+    largeProb = 0.18; // Pemula/awal permainan sedikit lebih bersahabat
+  }
+  if (isCrowded) {
+    largeProb = 0.12; // Papan padat: kurangi balok besar
+  }
+  if (isEmergency) {
+    largeProb = 0; // Papan kritis: jangan beri balok besar
+  }
 
   const chosenTemplates: ShapeTemplate[] = [];
 
@@ -204,13 +219,13 @@ export function generateShapeTrio(grid?: Grid): Shape[] {
       if (fitting.length > 0) candidates = fitting;
     }
 
-    // Hindari duplikat bentuk yang persis sama dalam 1 trio
+    // Hindari duplikat bentuk yang persis sama dalam 1 trio jika memungkinkan
     const unused = candidates.filter((t) => !chosenTemplates.some((c) => c.name === t.name));
     const finalPool = unused.length > 0 ? unused : candidates;
     return finalPool[Math.floor(Math.random() * finalPool.length)];
   };
 
-  // SLOT 1: Primary Piece
+  // SLOT 1: Primary Piece (Bisa Besar, Sedang, atau Kecil)
   if (isEmergency) {
     const clearingSmall = SMALL_SHAPES.filter((t) => grid && canTemplateClearLinesOnGrid(grid, t));
     if (clearingSmall.length > 0) {
@@ -218,86 +233,100 @@ export function generateShapeTrio(grid?: Grid): Shape[] {
     } else {
       chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
     }
-  } else if (isCrowded) {
-    const roll = Math.random();
-    if (roll < 0.65) {
-      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
-    } else {
-      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
-    }
   } else {
     const roll = Math.random();
-    if (roll < 0.12) {
-      // Hanya 12% peluang balok besar di kondisi papan normal
-      chosenTemplates.push(pickFromPool(LARGE_SHAPES, true));
-    } else if (roll < 0.60) {
-      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+    if (roll < largeProb) {
+      chosenTemplates.push(pickFromPool(LARGE_SHAPES, !isCrowded));
+    } else if (roll < largeProb + 0.48) {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, isCrowded));
     } else {
-      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, isCrowded));
     }
   }
 
   const hasLargePiece = chosenTemplates.some((t) => LARGE_SHAPES.some((l) => l.name === t.name));
 
-  // SLOT 2: Complementary Piece (Jika Slot 1 besar, Slot 2 wajib kecil/sedang)
-  if (hasLargePiece || isCrowded) {
+  // SLOT 2: Tactical Piece (Jika slot 1 sudah balok besar, slot 2 wajib sedang/kecil)
+  if (hasLargePiece || isEmergency) {
     const roll = Math.random();
-    if (roll < 0.65) {
-      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    if (roll < 0.60) {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, isEmergency));
     } else {
-      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, isEmergency));
     }
   } else {
+    // Normal: Medium (50%), Small (30%), Large (20% jika slot 1 bukan besar)
     const roll = Math.random();
-    if (roll < 0.50) {
-      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    if (roll < 0.20 && !isCrowded) {
+      chosenTemplates.push(pickFromPool(LARGE_SHAPES, false));
+    } else if (roll < 0.70) {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, isCrowded));
     } else {
-      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, isCrowded));
     }
   }
 
-  // SLOT 3: Lifeline Piece (Jaminan balok kecil atau pemecah garis)
-  if (isEmergency || isCrowded) {
+  const currentLargeCount = chosenTemplates.filter((t) => LARGE_SHAPES.some((l) => l.name === t.name)).length;
+
+  // SLOT 3: Balancer Piece (Pelengkap & pemecah kebuntuan yang pas)
+  if (isEmergency) {
     const clearingPieces = [...SMALL_SHAPES, ...MEDIUM_SHAPES].filter(
       (t) => grid && canTemplateClearLinesOnGrid(grid, t)
     );
-    if (clearingPieces.length > 0 && Math.random() < 0.7) {
+    if (clearingPieces.length > 0 && Math.random() < 0.65) {
       chosenTemplates.push(clearingPieces[Math.floor(Math.random() * clearingPieces.length)]);
     } else {
       chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
     }
-  } else {
+  } else if (currentLargeCount >= 1 || isCrowded) {
     const roll = Math.random();
-    if (roll < 0.70) {
-      chosenTemplates.push(pickFromPool(SMALL_SHAPES, true));
+    if (roll < 0.55) {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, isCrowded));
     } else {
-      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, true));
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, isCrowded));
+    }
+  } else {
+    // Normal: seimbang Medium (55%) dan Small (45%)
+    const roll = Math.random();
+    if (roll < 0.55) {
+      chosenTemplates.push(pickFromPool(MEDIUM_SHAPES, false));
+    } else {
+      chosenTemplates.push(pickFromPool(SMALL_SHAPES, false));
     }
   }
 
   // GUARANTEE CHECK:
-  // Pastikan MINIMAL 2 dari 3 balok bisa diletakkan di papan saat ini
+  // Jamin minimal 1 langkah VALID agar pemain tidak langsung mati mendadak tanpa bisa bergerak.
+  // Jika dalam kondisi kritis (isEmergency), jamin minimal 2 langkah valid.
   if (grid) {
+    const requiredFitting = isEmergency ? 2 : 1;
     let fittingCount = chosenTemplates.filter((t) => canTemplateFitOnGrid(grid, t)).length;
 
-    if (fittingCount < 2) {
-      for (let i = 0; i < chosenTemplates.length; i++) {
+    if (fittingCount < requiredFitting) {
+      for (let i = chosenTemplates.length - 1; i >= 0; i--) {
         if (!canTemplateFitOnGrid(grid, chosenTemplates[i])) {
+          // Cari pengganti dari balok sedang dulu agar tidak langsung jadi dot kecil membosankan
+          const fittingMedium = MEDIUM_SHAPES.filter((t) => canTemplateFitOnGrid(grid, t));
           const fittingSmall = SMALL_SHAPES.filter((t) => canTemplateFitOnGrid(grid, t));
-          if (fittingSmall.length > 0) {
+
+          if (fittingMedium.length > 0 && !isEmergency && Math.random() < 0.60) {
+            chosenTemplates[i] = fittingMedium[Math.floor(Math.random() * fittingMedium.length)];
+            fittingCount++;
+          } else if (fittingSmall.length > 0) {
             chosenTemplates[i] = fittingSmall[Math.floor(Math.random() * fittingSmall.length)];
             fittingCount++;
-            if (fittingCount >= 2) break;
           }
+
+          if (fittingCount >= requiredFitting) break;
         }
       }
     }
 
-    // Safety fallback mutlak: jika papan sangat sempit, pastikan minimal balok dot muat
+    // Safety fallback mutlak jika benar-benar buntu total
     if (fittingCount === 0) {
       const dotTemplate = SMALL_SHAPES[0];
       if (canTemplateFitOnGrid(grid, dotTemplate)) {
-        chosenTemplates[0] = dotTemplate;
+        chosenTemplates[chosenTemplates.length - 1] = dotTemplate;
       }
     }
   }

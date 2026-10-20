@@ -59,6 +59,15 @@ export interface RoomState {
   host_id: string;
 }
 
+export interface LiveEmote {
+  id: string;
+  senderId: string;
+  senderName: string;
+  emote: string;
+  timestamp: number;
+}
+
+
 export interface LeaderboardEntry {
   id: string;
   username: string;

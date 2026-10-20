@@ -18,6 +18,7 @@ import { DailyCheckinModal } from '@/components/DailyCheckinModal';
 import { UpdatesModal } from '@/components/UpdatesModal';
 import { ShopModal } from '@/components/ShopModal';
 import { PowerUpBar, PowerUpTool } from '@/components/PowerUpBar';
+import { QuickEmoteSystem, FloatingEmoteEvent } from '@/components/QuickEmoteSystem';
 import { getUserGems, getCheckinStatus, consumeGem, addGems } from '@/lib/gems';
 
 import { Grid, Shape, Player, RoomState, RoomInfo, StageMode } from '@/lib/types';
@@ -113,6 +114,10 @@ export default function Home() {
     attackerName: string;
     shapeName: string;
   } | null>(null);
+
+  // Quick Emote Live Reaction State
+  const [floatingEmotes, setFloatingEmotes] = useState<FloatingEmoteEvent[]>([]);
+  const [playerOverheadEmotes, setPlayerOverheadEmotes] = useState<Record<string, string>>({});
 
   // Dragging State
   const [dragState, setDragState] = useState<{
@@ -595,7 +600,7 @@ export default function Home() {
       }
 
       // Generate next trio after line clearing so shapes adapt to the actual final board state
-      const updatedShapes = allUsed ? generateShapeTrio(finalGrid) : nextShapes;
+      const updatedShapes = allUsed ? generateShapeTrio(finalGrid, finalScore) : nextShapes;
 
       setGrid(finalGrid);
       setShapes(updatedShapes);
@@ -836,15 +841,28 @@ export default function Home() {
       stageManager.leave();
     }
 
+    // Pastikan playerId tidak kosong (fall back ke localStorage / generate unik)
+    let validPlayerId = playerId;
+    if (!validPlayerId && typeof window !== 'undefined') {
+      validPlayerId = localStorage.getItem('blockarena_player_id') || '';
+    }
+    if (!validPlayerId) {
+      validPlayerId = `p-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('blockarena_player_id', validPlayerId);
+      }
+      setPlayerId(validPlayerId);
+    }
+
     const localPlayer: Player = {
-      id: playerId,
+      id: validPlayerId,
       username: currentUserName || username || 'Player',
       score: 0,
       combo: 0,
       linesCleared: 0,
       isAlive: true,
       isReady: true,
-      isHost: hostId === playerId,
+      isHost: hostId === validPlayerId,
       accentColor: '#3b82f6',
     };
 
@@ -905,6 +923,33 @@ export default function Home() {
           }
           return next;
         });
+      },
+      onPlayerEmote: (senderId, senderName, emote) => {
+        soundManager.playEmoteSound();
+        const newEvent: FloatingEmoteEvent = {
+          id: `emote-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          senderName,
+          emote,
+          isSelf: senderId === validPlayerId,
+          xPercent: 18 + Math.random() * 64,
+          createdAt: Date.now(),
+        };
+
+        setFloatingEmotes((prev) => [...prev.slice(-10), newEvent]);
+        setTimeout(() => {
+          setFloatingEmotes((prev) => prev.filter((e) => e.id !== newEvent.id));
+        }, 3000);
+
+        if (senderId) {
+          setPlayerOverheadEmotes((prev) => ({ ...prev, [senderId]: emote }));
+          setTimeout(() => {
+            setPlayerOverheadEmotes((prev) => {
+              const updated = { ...prev };
+              delete updated[senderId];
+              return updated;
+            });
+          }, 2800);
+        }
       },
     });
 
@@ -1071,9 +1116,11 @@ export default function Home() {
         {currentView === 'room_lobby' && roomState && (
           <RoomLobbyView
             roomState={roomState}
-            localPlayerId={playerId}
+            localPlayerId={stageManager ? stageManager.getLocalPlayer().id : playerId}
             onStartGame={handleStartStageMatch}
             onLeaveRoom={handleLeaveRoom}
+            playerEmotes={playerOverheadEmotes}
+            onSendEmote={(emote) => stageManager?.sendEmote(emote)}
           />
         )}
 
@@ -1286,12 +1333,24 @@ export default function Home() {
             {/* Right: Stage Live Scoreboard (Multiplayer Mode) */}
             {currentView === 'stage_playing' && roomState && (
               <div className="w-full max-w-[340px] flex flex-col gap-3">
+                <div className="flex items-center justify-between px-1">
+                  <span className="text-[10px] font-mono font-bold text-[#94a3b8] tracking-wider uppercase flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#10b981] animate-pulse" />
+                    LIVE MATCH
+                  </span>
+                  <QuickEmoteSystem
+                    onSendEmote={(emote) => stageManager?.sendEmote(emote)}
+                    floatingEmotes={[]}
+                  />
+                </div>
+
                 <StageScoreboard
                   players={roomState.players}
-                  localPlayerId={playerId}
+                  localPlayerId={stageManager ? stageManager.getLocalPlayer().id : playerId}
                   roomCode={roomState.code}
                   mode={roomState.mode}
                   timeLeft={roomState.timeLeft}
+                  playerEmotes={playerOverheadEmotes}
                 />
 
                 <button
@@ -1379,6 +1438,36 @@ export default function Home() {
         </div>
       )}
 
+      {/* GLOBAL LIVE FLOATING EMOTES OVERLAY */}
+      {(currentView === 'stage_playing' || currentView === 'room_lobby') && (
+        <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
+          {floatingEmotes.map((item) => (
+            <div
+              key={item.id}
+              className="absolute bottom-24 animate-float-up flex flex-col items-center gap-1 select-none pointer-events-none"
+              style={{
+                left: `${item.xPercent}%`,
+                transform: 'translateX(-50%)',
+              }}
+            >
+              <span
+                className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black tracking-wider shadow-lg backdrop-blur-md border ${
+                  item.isSelf
+                    ? 'bg-[#2563eb]/95 border-white/50 text-white shadow-[0_0_15px_rgba(37,99,235,0.6)]'
+                    : 'bg-[#181d2a]/95 border-[#38bdf8]/60 text-[#38bdf8] shadow-[0_0_15px_rgba(56,189,248,0.4)]'
+                }`}
+              >
+                {item.isSelf ? 'KAMU' : item.senderName}
+              </span>
+
+              <span className="text-4xl sm:text-5xl filter drop-shadow-[0_0_18px_rgba(255,255,255,0.8)] animate-bounce">
+                {item.emote}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* MODAL 1: USERNAME (Muncul di awal jika belum ada) */}
       <UsernameModal
         isOpen={isUsernameModalOpen}
@@ -1457,7 +1546,13 @@ export default function Home() {
       <AttackModal
         isOpen={isAttackModalOpen}
         onClose={() => setIsAttackModalOpen(false)}
-        rivals={roomState ? roomState.players.filter((p) => p.id !== playerId && p.isAlive) : []}
+        rivals={
+          roomState
+            ? roomState.players.filter(
+                (p) => p.id !== (stageManager ? stageManager.getLocalPlayer().id : playerId) && p.isAlive
+              )
+            : []
+        }
         onSendAttack={(targetPlayerId, shape) => {
           if (stageManager) {
             stageManager.sendAttack(targetPlayerId, shape);

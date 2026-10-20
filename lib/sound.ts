@@ -222,6 +222,34 @@ class SoundManager {
     }
   }
 
+  // Playful upbeat pop/chirp when receiving or sending live emotes
+  public playEmoteSound() {
+    if (!this.enabled) return;
+    const ctx = this.initContext();
+    if (!ctx) return;
+
+    try {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(480, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(840, ctx.currentTime + 0.08);
+      osc.frequency.exponentialRampToValueAtTime(1260, ctx.currentTime + 0.16);
+
+      gain.gain.setValueAtTime(0.18, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.22);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start();
+      osc.stop(ctx.currentTime + 0.22);
+    } catch {
+      // Audio error
+    }
+  }
+
   // Power-Up: Rotate whoosh
   public playRotate() {
     if (!this.enabled) return;

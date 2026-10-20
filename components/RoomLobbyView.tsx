@@ -3,12 +3,15 @@
 import React, { useState } from 'react';
 import { Users, Copy, Check, Play, Share2, Lock, Globe, ArrowLeft, Crown, Swords, Timer } from 'lucide-react';
 import { Player, RoomState } from '@/lib/types';
+import { QuickEmoteSystem } from './QuickEmoteSystem';
 
 interface RoomLobbyViewProps {
   roomState: RoomState;
   localPlayerId: string;
   onStartGame: () => void;
   onLeaveRoom: () => void;
+  playerEmotes?: Record<string, string>;
+  onSendEmote?: (emote: string) => void;
 }
 
 export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
@@ -16,6 +19,8 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
   localPlayerId,
   onStartGame,
   onLeaveRoom,
+  playerEmotes = {},
+  onSendEmote,
 }) => {
   const [copiedLink, setCopiedLink] = useState(false);
   const [copiedCode, setCopiedCode] = useState(false);
@@ -91,6 +96,14 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Quick Emote in Lobby */}
+          {onSendEmote && (
+            <QuickEmoteSystem
+              onSendEmote={onSendEmote}
+              floatingEmotes={[]}
+            />
+          )}
+
           {/* Copy Code */}
           <button
             onClick={handleCopyCode}
@@ -140,6 +153,13 @@ export const RoomLobbyView: React.FC<RoomLobbyViewProps> = ({
                   <span className={`text-xs font-bold truncate ${isMe ? 'text-[#3b82f6]' : 'text-white'}`}>
                     {p.username} {isMe && '(KAMU)'}
                   </span>
+
+                  {/* Active Overhead Live Emote */}
+                  {playerEmotes[p.id] && (
+                    <span className="text-base animate-bounce drop-shadow-[0_0_8px_rgba(255,255,255,0.4)] shrink-0 select-none">
+                      {playerEmotes[p.id]}
+                    </span>
+                  )}
 
                   {index === 0 && (
                     <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.5 bg-[#2563eb] text-white rounded font-mono shrink-0">
