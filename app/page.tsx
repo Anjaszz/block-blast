@@ -106,6 +106,7 @@ export default function Home() {
   const [roomState, setRoomState] = useState<RoomState | null>(null);
   const [stageWinner, setStageWinner] = useState<Player | null>(null);
   const [stageRank, setStageRank] = useState<number | null>(null);
+  const [stageFinalPlayers, setStageFinalPlayers] = useState<Player[]>([]);
 
   // Attack Gift System State (Combo >= 3)
   const [attackCharges, setAttackCharges] = useState(0);
@@ -885,10 +886,11 @@ export default function Home() {
             : manager
             ? manager.getRoomState().players
             : [];
-        let myRank = list.findIndex((p) => p.id === playerId) + 1;
-        if (winner && winner.id === playerId) {
+        setStageFinalPlayers(list);
+        let myRank = list.findIndex((p) => p.id === validPlayerId) + 1;
+        if (winner && winner.id === validPlayerId) {
           myRank = 1;
-        } else if (winner && winner.id !== playerId && (myRank <= 1 || myRank === 0)) {
+        } else if (winner && winner.id !== validPlayerId && (myRank <= 1 || myRank === 0)) {
           myRank = 2;
         }
         setStageRank(myRank > 0 ? myRank : 2);
@@ -1529,6 +1531,8 @@ export default function Home() {
         stageMode={roomState?.mode || 'survival'}
         stageWinner={stageWinner}
         stageRank={stageRank}
+        stagePlayers={stageFinalPlayers.length > 0 ? stageFinalPlayers : (roomState?.players || [])}
+        roomCode={roomState?.code}
         localPlayerId={playerId}
         gems={gems}
         hasUsedContinue={hasUsedContinue}
@@ -1540,6 +1544,7 @@ export default function Home() {
             setRoomState(null);
             setStageWinner(null);
             setStageRank(null);
+            setStageFinalPlayers([]);
             setCurrentView('dashboard');
           } else {
             handleRestartBoard();
@@ -1549,6 +1554,7 @@ export default function Home() {
           setIsGameOver(false);
           setStageWinner(null);
           setStageRank(null);
+          setStageFinalPlayers([]);
           if (stageManager) stageManager.leave();
           setStageManager(null);
           setRoomState(null);
